@@ -69,6 +69,11 @@ function Invoke-Native {
     foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
     if ($ClearEnv) {
         foreach ($k in $ClearEnv) { [Environment]::SetEnvironmentVariable($k, $null) }
+        # 有些受管环境会强制注入代理，SetEnvironmentVariable(null) 删不掉。
+        # 实测过：删完读回来值还在。这时"直连"是假的，必须承认。
+        if ([Environment]::GetEnvironmentVariable($ClearEnv[0])) {
+            $script:DirectBlocked = $true
+        }
     }
     try {
         $out = & $Exe @ArgList 2>&1
@@ -165,10 +170,16 @@ function Push-Robust {
         Say '未检测到代理，仅尝试直连'
     }
 
+    # 代理变量删不掉的环境，直连根本发不出去，别浪费 21 秒一次的超时
+    $canDirect = -not $script:DirectBlocked
+    if ($haveProxy -and -not $canDirect) {
+        Warn '该环境的代理变量无法清除（被强制注入），只能走代理'
+    }
+
     $lastMsg = ''
     for ($i = 1; $i -le $Tries; $i++) {
-        # 奇数轮直连，偶数轮走代理（没有代理就一直是直连）
-        $useProxy = $haveProxy -and ($i % 2 -eq 0)
+        # 奇数轮直连，偶数轮走代理；直连不可用时全部走代理
+        $useProxy = $haveProxy -and ((-not $canDirect) -or ($i % 2 -eq 0))
         $label = if ($useProxy) { '走代理' } else { '直连' }
         $envs  = if ($useProxy) { $ProxyEnv } else { $DirectEnv }
 
@@ -248,7 +259,8 @@ function Confirm-Push {
 
     Say '核对远端与本地是否一致'
     for ($i = 1; $i -le 4; $i++) {
-        $envs = if ((Test-ProxyAvailable) -and ($i % 2 -eq 0)) { $ProxyEnv } else { $DirectEnv }
+        $useProxy = (Test-ProxyAvailable) -and ($script:DirectBlocked -or ($i % 2 -eq 0))
+        $envs = if ($useProxy) { $ProxyEnv } else { $DirectEnv }
         $r = Invoke-Native 'git' @('ls-remote', $Remote, "refs/heads/$Branch") -ClearEnv $envs
         if ($r.Code -eq 0) {
             $txt = ("$($r.Output)" -split "`n" | Where-Object { $_ -match '\S' } | Select-Object -First 1)

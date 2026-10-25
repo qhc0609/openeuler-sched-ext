@@ -1,0 +1,33 @@
+# 内核相关构建产物
+*.o
+*.ko
+*.mod
+*.mod.c
+*.symvers
+*.order
+.config
+.config.old
+vmlinux
+vmlinux.o
+bzImage
+System.map
+Module.symvers
+modules.order
+
+# 编译目录
+build/
+out/
+target/
+__pycache__/
+*.pyc
+
+# 本地环境
+.vm.env
+*.local
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store

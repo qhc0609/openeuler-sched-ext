@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Lint scripts
+        run: shellcheck -S error -x scripts/*.sh
+
+  openeuler-smoke:
+    name: smoke on openEuler 24.03
+    runs-on: ubuntu-latest
+    container: openeuler/openeuler:24.03-lts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show baseline
+        run: |
+          cat /etc/os-release
+          uname -r
+
+      # 容器共享宿主内核，没有 /boot/config-*，所以 preflight 预期返回 1
+      # （= NEED_KERNEL_BUILD）。这里只验证脚本能在 openEuler 用户态跑通。
+      - name: Run preflight (expected to exit 1 in container)
+        run: |
+          set +e
+          bash scripts/00-preflight.sh
+          rc=$?
+          echo "::notice::preflight exit code = $rc (1 = NEED_KERNEL_BUILD, 预期值)"
+          exit 0
+
+      - name: Scripts are executable and parse cleanly
+        run: |
+          for f in scripts/*.sh; do
+            bash -n "$f"
+            echo "syntax ok: $f"
+          done

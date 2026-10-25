@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# sched_ext 内核配置片段
+#
+# 用法（在内核源码树根）：
+#   ./scripts/kconfig/merge_config.sh -m .config configs/sched-ext.fragment
+#   make olddefconfig
+#
+# 说明：CONFIG_SCHED_CLASS_EXT 在 Kconfig 里有 depends，会自动拉取
+#       其余依赖。这里显式列出是为了让缺失时立刻暴露，而不是被
+#       olddefconfig 静默关掉。
+
+# --- sched_ext 本体（Linux 6.12+ 才存在这个符号）---
+CONFIG_SCHED_CLASS_EXT=y
+
+# --- 依赖：BPF 基础设施 ---
+CONFIG_BPF_SYSCALL=y
+CONFIG_BPF_JIT=y
+CONFIG_BPF_JIT_ALWAYS_ON=y
+CONFIG_BPF_UNPRIV_DEFAULT_OFF=y
+
+# --- 依赖：BTF（sched_ext 的 ops 结构靠 BTF 描述）---
+CONFIG_DEBUG_INFO=y
+CONFIG_DEBUG_INFO_BTF=y
+CONFIG_DEBUG_INFO_BTF_MODULES=y
+
+# --- 依赖：调度器分组 / cgroup 支持 ---
+CONFIG_CGROUP_SCHED=y
+CONFIG_FAIR_GROUP_SCHED=y
+CONFIG_EXT_GROUP_SCHED=y
+
+# --- 依赖：perf / tracepoint（做观测时要用）---
+CONFIG_PERF_EVENTS=y
+CONFIG_FTRACE=y
+CONFIG_BPF_EVENTS=y
+
+# --- 依赖：调度器核心 ---
+CONFIG_SCHED_CORE=y
+CONFIG_SMP=y

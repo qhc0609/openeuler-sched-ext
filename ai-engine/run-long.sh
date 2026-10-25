@@ -252,7 +252,7 @@ for g in $PHASES; do
 		"$(miss "$g" "/tmp/probe-%s-%s.json")"
 done
 
-say "三、算力对照：每请求的计算耗时（微秒，五组应接近）"
+say "三、算力对照：每请求的计算耗时（微秒，七组应接近）"
 printf '%-8s %10s %10s\n' "组" "work_p50" "work_p99"
 for g in $PHASES; do
 	printf '%-8s %10s %10s\n' "$g" \

@@ -158,6 +158,10 @@ sudo dnf install -y gcc make bc bison flex elfutils-libelf-devel \
 │   └── 20-verify.sh         # 实机验证
 ├── configs/
 │   └── sched-ext.fragment   # Kconfig 片段
+├── scheds/
+│   ├── minimal.bpf.c        # 最小可用 sched_ext 调度器（BPF 侧，逐行注释）
+│   ├── minimal.c            # 用户态加载器：open → load → attach
+│   └── Makefile             # 两段式构建：BPF 目标 + 用户态目标
 ├── docs/
 │   ├── why-not-wsl.md       # 为什么不能靠 WSL，以及"一键"能到哪一步
 │   ├── openeuler-kernel-matrix.md  # 各版本 × sched_ext 支持矩阵（实测核对）
@@ -165,6 +169,7 @@ sudo dnf install -y gcc make bc bison flex elfutils-libelf-devel \
 │   ├── verified-6.12-sched-ext.md  # 装上 6.12 后 sched_ext 真正接管调度
 │   └── backport-6.6.md      # 回移的工程量，以及三条路线
 ├── push.ps1                 # Windows 侧一键发布到 GitHub（5 秒）
+├── push-via-api.py          # github.com 挂掉时的备用通道：走 Git Data API 建提交
 ├── vm-ssh.ps1               # Windows 侧通过 SSH 驱动虚拟机
 ├── .vm.env.example          # 虚拟机连接配置模板
 ├── .gitattributes           # 强制 LF，避免 CRLF 污染 patch
@@ -240,8 +245,8 @@ make olddefconfig
 | `github.com` | 超时 |
 | `raw.githubusercontent.com` | 超时 |
 
-这种情况下不是凭据问题，也不是仓库权限问题，只能等 `github.com` 恢复。
-`push.ps1` 会自己判断并告诉你是哪一种，挂机重试：
+这种情况下不是凭据问题，也不是仓库权限问题。`push.ps1` 会自己判断并告诉你是哪一种，
+挂机重试：
 
 ```powershell
 .\push.ps1 -Watch 30      # 每 30 秒试一轮，最多 30 分钟，成功即退出
@@ -250,6 +255,40 @@ make olddefconfig
 另外 `push.ps1` 会自动在 `C:\Program Files\Git\cmd`、`C:\Program Files\GitHub CLI`
 这些常见位置找 `git.exe` / `gh.exe` —— 装完没重开终端、或者安装器没写 PATH，
 是"一键推送"失败最常见的原因。
+
+**Q: `github.com` 就是不通，今天还想发版怎么办？**
+
+不用等。`git push` 走的是 `github.com:443` 的 smart-HTTP 协议，但**一个 push 的本质
+只是三件事**：传对象、建提交、挪 ref。这三件事 Git Data API 全都能做，而它挂在
+`api.github.com` 上 —— 实测这条通道经常是通的。
+
+```bash
+python push-via-api.py
+```
+
+它做的事：
+
+1. 对每个改动文件 `POST /git/blobs`，上传后**比对本地 blob 哈希**，不一致立刻退出；
+2. `POST /git/trees`（带 `base_tree`），比对 tree 哈希；
+3. `POST /git/commits`，把 tree / parent / author / committer / message 原样填回去；
+4. `PATCH /git/refs/heads/main` 挪分支。
+
+关键在于第 3 步：提交对象的哈希就是 tree + parent + author + committer + message 的哈希，
+**只要这些字段逐字节一致，重建出来的 commit 哈希和本地完全相同**。所以这不是"另建一个
+提交糊弄过去"，而是同一个对象换了一条路上去。实测结果：
+
+```
+commit
+  local  3dc833cea28674052adad5a15453b22f6ca8b3b0
+  remote 3dc833cea28674052adad5a15453b22f6ca8b3b0
+  match - byte-identical commit object
+```
+
+任何一步哈希对不上，脚本就停在那里不动 ref —— 宁可失败，也不留一个"看起来推上去了"
+的分叉历史。
+
+唯一的坑是日期：git 内部存 `<epoch> <+-HHMM>`，API 只收 ISO 8601。两者表示同一时刻，
+GitHub 会再规范化回 git 格式，哈希不受影响。
 
 ---
 

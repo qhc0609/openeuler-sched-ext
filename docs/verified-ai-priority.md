@@ -74,6 +74,14 @@ max 中位数：44832 / 39305 / 19866。
 
 两次运行的 p50 几乎一致（493/489、950/1035、286/285），p99 的绝对值波动很大。
 
+**这一轮的结果文件没有留存。** `run-demo.sh` 的结果文件名是固定的
+（`/tmp/res-<组>-<轮>.json`），后一次 1200 请求的运行把它覆盖了，
+只剩当时的终端汇总。所以这一节只有汇总数字，没有逐轮原文；
+要复核请重跑，不要引用这里的单轮值。
+
+同一天早些时候还有一次 600 请求的单轮试跑（用来验证脚本能跑通，不是结论依据），
+文件还在，原文见附录。
+
 ## 六、调度器计数器（带负载，kick=1）
 
 ```
@@ -144,3 +152,74 @@ cd ai-engine && make
 cd scheds && make ai_prio ai_prio.bpf.o
 sudo ./ai_prio ./ai_prio.bpf.o <pid> --kick 1
 ```
+
+---
+
+## 十、附录：原始结果文件原文
+
+`tiny_infer --json` 每次运行输出一行 JSON，`run-demo.sh` 把它重定向到
+`/tmp/res-<组>-<轮>.json`。下面是 2026-10-25 21:09–21:13 那几次运行留下的文件，
+逐字复制，没有重排。
+
+### 10.1 主数据集：1200 请求 × 3 轮（21:11–21:13）
+
+```
+/tmp/res-cfs-1.json
+{"requests":1200,"sched_p50_us":476,"sched_p90_us":4222,"sched_p99_us":35039,"sched_max_us":99104,"work_p50_us":445,"work_p99_us":7054}
+/tmp/res-cfs-2.json
+{"requests":1200,"sched_p50_us":523,"sched_p90_us":4472,"sched_p99_us":45350,"sched_max_us":123192,"work_p50_us":446,"work_p99_us":10130}
+/tmp/res-cfs-3.json
+{"requests":1200,"sched_p50_us":493,"sched_p90_us":13063,"sched_p99_us":280726,"sched_max_us":362375,"work_p50_us":446,"work_p99_us":1987}
+/tmp/res-nokick-1.json
+{"requests":1200,"sched_p50_us":991,"sched_p90_us":2776,"sched_p99_us":12299,"sched_max_us":36943,"work_p50_us":447,"work_p99_us":4239}
+/tmp/res-nokick-2.json
+{"requests":1200,"sched_p50_us":935,"sched_p90_us":2731,"sched_p99_us":14768,"sched_max_us":30810,"work_p50_us":447,"work_p99_us":3917}
+/tmp/res-nokick-3.json
+{"requests":1200,"sched_p50_us":950,"sched_p90_us":2877,"sched_p99_us":38662,"sched_max_us":100993,"work_p50_us":445,"work_p99_us":4242}
+/tmp/res-kick-1.json
+{"requests":1200,"sched_p50_us":286,"sched_p90_us":584,"sched_p99_us":10089,"sched_max_us":31019,"work_p50_us":445,"work_p99_us":4333}
+/tmp/res-kick-2.json
+{"requests":1200,"sched_p50_us":278,"sched_p90_us":887,"sched_p99_us":15920,"sched_max_us":34457,"work_p50_us":446,"work_p99_us":2647}
+/tmp/res-kick-3.json
+{"requests":1200,"sched_p50_us":331,"sched_p90_us":934,"sched_p99_us":26118,"sched_max_us":105979,"work_p50_us":447,"work_p99_us":2642}
+```
+
+展开成表（微秒）：
+
+| 组 | 轮次 | p50 | p90 | p99 | max | work_p50 | work_p99 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| A CFS | #1 | 476 | 4222 | 35039 | 99104 | 445 | 7054 |
+| A CFS | #2 | 523 | 4472 | 45350 | 123192 | 446 | 10130 |
+| A CFS | #3 | 493 | 13063 | 280726 | 362375 | 446 | 1987 |
+| B 不踢 | #1 | 991 | 2776 | 12299 | 36943 | 447 | 4239 |
+| B 不踢 | #2 | 935 | 2731 | 14768 | 30810 | 447 | 3917 |
+| B 不踢 | #3 | 950 | 2877 | 38662 | 100993 | 445 | 4242 |
+| C 踢 | #1 | 286 | 584 | 10089 | 31019 | 445 | 4333 |
+| C 踢 | #2 | 278 | 887 | 15920 | 34457 | 446 | 2647 |
+| C 踢 | #3 | 331 | 934 | 26118 | 105979 | 447 | 2642 |
+| **中位数** | | **493 / 950 / 286** | | | | **446 / 447 / 446** | |
+
+### 10.2 早期单轮试跑：600 请求（21:09）
+
+```
+/tmp/res-cfs.json
+{"requests":600,"sched_p50_us":870,"sched_p90_us":62666,"sched_p99_us":221627,"sched_max_us":255394,"work_p50_us":446,"work_p99_us":6919}
+/tmp/res-nokick.json
+{"requests":600,"sched_p50_us":1030,"sched_p90_us":2629,"sched_p99_us":21539,"sched_max_us":47132,"work_p50_us":454,"work_p99_us":4123}
+/tmp/res-kick.json
+{"requests":600,"sched_p50_us":346,"sched_p90_us":1833,"sched_p99_us":51995,"sched_max_us":108655,"work_p50_us":447,"work_p99_us":4625}
+```
+
+这一组只有一轮，请求数也少，用来验证脚本能跑通，不作为结论依据。
+但它给出的方向和主数据集一致：C 踢 < A CFS < B 不踢。
+
+### 10.3 怎么自己取这些文件
+
+```bash
+cd ai-engine
+sudo ./run-demo.sh
+for f in /tmp/res-*.json; do echo "--- $f"; cat "$f"; done
+```
+
+`run-demo.sh` 只在终端打印中位数，逐轮原文一直在 `/tmp` 里，脚本本身不删。
+想留档就在跑完后把它们复制出来，否则下一次运行会覆盖同名文件。

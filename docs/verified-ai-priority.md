@@ -17,7 +17,7 @@ CPU：4 vCPU
 | vCPU | 4 |
 | 压测线程 | 8（= 2 × 核数） |
 | 请求间隔 | 10 ms |
-| 每轮请求数 | 1200 |
+| 每轮请求数 | 1200（脚本默认 600，本文用 `REQUESTS=1200` 覆盖） |
 | 每组重复 | 3 轮 |
 | 推理负载 | 128→256→64 MLP，每请求 16 次前向 |
 | 调度器 | `scheds/ai_prio.bpf.c`，AI 时间片 20 ms，普通 3 ms |
@@ -134,7 +134,8 @@ p99 在不同轮次之间差到一个数量级（CFS 组 35 ms 到 280 ms），�
 
 ```bash
 cd ai-engine
-sudo ./run-demo.sh                      # 默认 3 轮，1200 请求
+sudo ./run-demo.sh                      # 默认 3 轮 × 600 请求
+REQUESTS=1200 sudo ./run-demo.sh        # 本文这组数字用的配置
 REPS=5 THREADS=12 REQUESTS=2000 sudo ./run-demo.sh
 ```
 

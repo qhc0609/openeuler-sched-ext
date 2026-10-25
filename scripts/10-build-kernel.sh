@@ -117,6 +117,20 @@ FRAG="${REPO_ROOT}/configs/sched-ext.fragment"
 
 log "合并 sched_ext 配置片段"
 ./scripts/kconfig/merge_config.sh -m -O . .config "$FRAG" >/dev/null
+
+# openEuler 的 /boot/config 把 CONFIG_SYSTEM_TRUSTED_KEYS 指向自家签名证书
+# (certs/openeuler-cert.pem)。原版内核源码树里没有这个文件，于是 certs 阶段直接报
+#   make[3]: *** 没有规则可制作目标"certs/openeuler-cert.pem"
+# 本项目不涉及内核模块签名信任链，清空即可（内核会改用自签名）。
+if grep -qE '^CONFIG_SYSTEM_TRUSTED_KEYS=".+"' .config; then
+    log "清空 CONFIG_SYSTEM_TRUSTED_KEYS（发行版私有证书在原版树里不存在）"
+    ./scripts/config --file .config --set-str SYSTEM_TRUSTED_KEYS ""
+fi
+if grep -qE '^CONFIG_SYSTEM_REVOCATION_KEYS=".+"' .config; then
+    log "清空 CONFIG_SYSTEM_REVOCATION_KEYS"
+    ./scripts/config --file .config --set-str SYSTEM_REVOCATION_KEYS ""
+fi
+
 make olddefconfig
 
 log "校验关键符号"

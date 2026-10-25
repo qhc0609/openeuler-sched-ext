@@ -195,6 +195,20 @@ notepad .vm.env                                   # 填 VM_HOST / VM_USER
 上游首次合入是 6.12。但**发行版可以自己回移** —— openEuler 26.09 就做了。
 所以「6.6 能不能开 sched_ext」取决于发行版有没有回移，不是内核版本本身。`-v` 指定任意 ≥6.12 版本都行。
 
+**Q: 编译到 certs 阶段报 `没有规则可制作目标"certs/openeuler-cert.pem"`？**
+这是把**发行版内核配置**直接喂给**原版内核源码树**的必然结果：
+openEuler 的 `/boot/config` 里 `CONFIG_SYSTEM_TRUSTED_KEYS="certs/openeuler-cert.pem"`，
+而原版 6.12 的 `certs/` 目录里没有这个文件，于是 `certs/x509_certificate_list` 无法生成。
+
+`10-build-kernel.sh` 已经自动处理（合并片段后把该符号清空）。手工构建时这样做：
+
+```bash
+scripts/config --file .config --set-str SYSTEM_TRUSTED_KEYS ""
+make olddefconfig
+```
+
+本项目不涉及内核模块签名信任链，清空后内核会改用自签名，不影响 sched_ext。
+
 **Q: 装完新内核起不来怎么办？**
 用户态完全没动。重启进 GRUB 选回原内核即可。所以在虚拟机里做，先打快照。
 

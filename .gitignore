@@ -37,3 +37,8 @@ __pycache__/
 scheds/vmlinux.h
 scheds/minimal
 scheds/minimal.bpf.o
+scheds/ai_prio
+
+# ai-engine/ 的构建产物
+ai-engine/tiny_infer
+ai-engine/loadgen

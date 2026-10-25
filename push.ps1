@@ -22,8 +22,15 @@
 .PARAMETER MaxTry
     推送最大尝试次数，默认 6。
 
+.PARAMETER Watch
+    挂机重试的分钟数。设成 30 就一直试 30 分钟，成功即退出。
+    适用于 github.com 时通时不通的情况（浏览器能开、git 却推不上去）。
+
 .EXAMPLE
     .\push.ps1
+
+.EXAMPLE
+    .\push.ps1 -Watch 30
 
 .EXAMPLE
     .\push.ps1 -RepoName my-scx-lab -Owner myorg -Private
@@ -34,7 +41,8 @@ param(
     [string]$Owner = '',
     [switch]$Private,
     [string]$Description = 'Enable sched_ext on openEuler 24.03 LTS (Linux 6.6 baseline)',
-    [int]$MaxTry = 6
+    [int]$MaxTry = 6,
+    [int]$Watch = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -89,6 +97,53 @@ function Test-ProxyAvailable {
 }
 
 <#
+  直接测 TCP 443 是否连得上，5 秒超时。
+  git push 走的是 github.com，gh 走的是 api.github.com —— 两者经常一个通一个不通，
+  分开测才能定位到底是谁的问题。
+#>
+function Test-Endpoint {
+    param([string]$HostName, [int]$Port = 443, [int]$TimeoutMs = 5000)
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $iar = $client.BeginConnect($HostName, $Port, $null, $null)
+        if (-not $iar.AsyncWaitHandle.WaitOne($TimeoutMs, $false)) { return $false }
+        $client.EndConnect($iar)
+        return $true
+    } catch {
+        return $false
+    } finally {
+        try { $client.Close() } catch { }
+    }
+}
+
+<#
+  推送失败时给出可执行的判断，而不是一句"网络问题"。
+#>
+function Show-NetworkVerdict {
+    Say '定位断点（分别探测两个域名）'
+    $gitHost = Test-Endpoint 'github.com' 443 6000
+    $apiHost = Test-Endpoint 'api.github.com' 443 6000
+
+    $line1 = "github.com:443      " + $(if ($gitHost) { '可达' } else { '不可达' })
+    $line2 = "api.github.com:443  " + $(if ($apiHost) { '可达' } else { '不可达' })
+    Write-Host "  $line1" -ForegroundColor $(if ($gitHost) { 'Green' } else { 'Red' })
+    Write-Host "  $line2" -ForegroundColor $(if ($apiHost) { 'Green' } else { 'Red' })
+
+    if (-not $gitHost -and $apiHost) {
+        Warn 'github.com 被阻断，但 api.github.com 正常。'
+        Write-Host '  git push 必须走 github.com，所以这不是凭据或权限问题，只能等它恢复。' -ForegroundColor Yellow
+        Write-Host '  浏览器能打开页面不代表 git 能推 —— 浏览器会重试、会走不同连接。' -ForegroundColor Yellow
+        Write-Host '  建议：.\push.ps1 -Watch 30   挂着自动重试 30 分钟' -ForegroundColor Yellow
+        return 'github-blocked'
+    }
+    if (-not $gitHost -and -not $apiHost) {
+        Warn '两个域名都不通，整机出网有问题（断网 / 代理挂了 / 需要开 VPN）。'
+        return 'offline'
+    }
+    return 'reachable'
+}
+
+<#
   带重试的推送。
   轮流尝试「直连」和「走环境代理」，任一成功即返回。
   成功后再用 ls-remote 核对远端分支是否已指向本地 HEAD。
@@ -97,8 +152,10 @@ function Push-Robust {
     param(
         [string]$Remote = 'origin',
         [string]$Branch = 'main',
-        [string[]]$ExtraArgs = @()
+        [string[]]$ExtraArgs = @(),
+        [int]$Tries = 0
     )
+    if ($Tries -le 0) { $Tries = $MaxTry }
 
     $haveProxy = Test-ProxyAvailable
     if ($haveProxy) {
@@ -109,13 +166,13 @@ function Push-Robust {
     }
 
     $lastMsg = ''
-    for ($i = 1; $i -le $MaxTry; $i++) {
+    for ($i = 1; $i -le $Tries; $i++) {
         # 奇数轮直连，偶数轮走代理（没有代理就一直是直连）
         $useProxy = $haveProxy -and ($i % 2 -eq 0)
         $label = if ($useProxy) { '走代理' } else { '直连' }
         $envs  = if ($useProxy) { $ProxyEnv } else { $DirectEnv }
 
-        Say ("推送尝试 $i/$MaxTry（$label）")
+        Say ("推送尝试 $i/$Tries（$label）")
         $pushArgs = @('push', $Remote, $Branch) + $ExtraArgs
         $r = Invoke-Native 'git' $pushArgs -ClearEnv $envs
 
@@ -133,18 +190,48 @@ function Push-Robust {
             Good '远端已是最新，无需推送'
             return $true
         }
-        if ($i -lt $MaxTry) {
+        if ($i -lt $Tries) {
             $wait = [Math]::Min(3 * $i, 15)
             Say "等待 $wait 秒后重试..."
             Start-Sleep -Seconds $wait
         }
     }
-    Bad "推送连续失败 $MaxTry 次"
-    Write-Host ''
-    Write-Host '可能原因：' -ForegroundColor Yellow
-    Write-Host '  1) 网络/代理暂时不可用     -> 过几分钟再跑一次本脚本'
-    Write-Host '  2) 凭据失效                -> gh auth login'
-    Write-Host '  3) 无推送权限              -> gh auth refresh -h github.com -s workflow'
+    Bad "推送连续失败 $Tries 次"
+    return $false
+}
+
+<#
+  按 -Watch 决定是"试一次"还是"挂着一直试"。
+#>
+function Invoke-PushPhase {
+    param(
+        [string]$Remote = 'origin',
+        [string]$Branch = 'main',
+        [string[]]$ExtraArgs = @()
+    )
+
+    if ($Watch -le 0) {
+        if (Push-Robust -Remote $Remote -Branch $Branch -ExtraArgs $ExtraArgs) { return $true }
+        $null = Show-NetworkVerdict
+        return $false
+    }
+
+    $deadline = (Get-Date).AddMinutes($Watch)
+    $round = 1
+    while ((Get-Date) -lt $deadline) {
+        $left = [int][Math]::Ceiling(($deadline - (Get-Date)).TotalMinutes)
+        Say "挂机模式第 $round 轮，剩余约 $left 分钟"
+        if (Push-Robust -Remote $Remote -Branch $Branch -ExtraArgs $ExtraArgs -Tries 2) { return $true }
+        $verdict = Show-NetworkVerdict
+        if ($verdict -eq 'offline') {
+            Warn '整机不通，挂机重试无意义，先检查网络'
+            return $false
+        }
+        Say '30 秒后进入下一轮（Ctrl+C 可中断，已提交的内容不会丢）'
+        Start-Sleep -Seconds 30
+        $round++
+    }
+    Bad "挂机 $Watch 分钟仍未成功"
     return $false
 }
 
@@ -307,7 +394,7 @@ if ($exists) {
     } else {
         $null = Invoke-Native 'git' @('remote', 'add', 'origin', "https://github.com/$full.git")
     }
-    if (-not (Push-Robust -Remote 'origin' -Branch 'main')) { exit 1 }
+    if (-not (Invoke-PushPhase -Remote 'origin' -Branch 'main')) { exit 1 }
 } else {
     Say '在 GitHub 创建仓库（先不推送）'
     $vis = '--public'
@@ -328,7 +415,7 @@ if ($exists) {
         exit 1
     }
     # 仓库建好后再用带重试的推送，而不是让 gh 一次定生死
-    if (-not (Push-Robust -Remote 'origin' -Branch 'main' -ExtraArgs @('-u'))) { exit 1 }
+    if (-not (Invoke-PushPhase -Remote 'origin' -Branch 'main' -ExtraArgs @('-u'))) { exit 1 }
 }
 
 # ---------------------------------------------------------------- 收尾

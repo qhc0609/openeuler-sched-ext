@@ -229,6 +229,28 @@ make olddefconfig
 **Q: sched_ext 换调度器要重启吗？**
 不用，热切换是它的核心卖点。
 
+**Q: `push.ps1` 一直报 502 / 超时，但浏览器能打开 GitHub？**
+先分清是哪一段断了 —— `git push` 只走 `github.com`，`gh` 走 `api.github.com`，
+两者经常一个通一个不通。实测过一次：
+
+| 端点 | 结果 |
+|---|---|
+| `api.github.com` | 200 / 0.35s |
+| `codeload.github.com` | 301 / 0.64s |
+| `github.com` | 超时 |
+| `raw.githubusercontent.com` | 超时 |
+
+这种情况下不是凭据问题，也不是仓库权限问题，只能等 `github.com` 恢复。
+`push.ps1` 会自己判断并告诉你是哪一种，挂机重试：
+
+```powershell
+.\push.ps1 -Watch 30      # 每 30 秒试一轮，最多 30 分钟，成功即退出
+```
+
+另外 `push.ps1` 会自动在 `C:\Program Files\Git\cmd`、`C:\Program Files\GitHub CLI`
+这些常见位置找 `git.exe` / `gh.exe` —— 装完没重开终端、或者安装器没写 PATH，
+是"一键推送"失败最常见的原因。
+
 ---
 
 ## License

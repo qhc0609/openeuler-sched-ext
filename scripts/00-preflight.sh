@@ -89,7 +89,13 @@ else
 
     for sym in CONFIG_SCHED_CLASS_EXT CONFIG_BPF_SYSCALL CONFIG_BPF_JIT \
                CONFIG_BPF_JIT_ALWAYS_ON CONFIG_DEBUG_INFO_BTF CONFIG_EXT_GROUP_SCHED; do
+        # A disabled bool is written as "# CONFIG_X is not set", not "CONFIG_X=n",
+        # so a plain "^CONFIG_X=" match silently misses it.
         line="$(cfggrep "^${sym}=" )"
+        if [[ -z "$line" ]]; then
+            line="$(cfggrep "^# ${sym} is not set")"
+        fi
+
         if [[ -z "$line" ]]; then
             warn "${sym} 不存在于配置中"
             if [[ "$sym" == "CONFIG_SCHED_CLASS_EXT" ]]; then
@@ -99,10 +105,12 @@ else
         elif [[ "$line" == *"=y" ]]; then
             ok "${line}"
         else
-            warn "${line}（不是 =y）"
+            warn "${line}（未启用）"
             if [[ "$sym" == "CONFIG_SCHED_CLASS_EXT" ]]; then
                 NEED_BUILD=1
-                dim "符号存在但被关掉 —— 该树已回移，改 =y 重编即可（26.09 即如此）"
+                # 注意：符号存在 ≠ 已回移。24.03 SP4 就是反例——配置里有这一行，
+                # 但 OLK-6.6 树里 kernel/sched/ext.c 根本不存在。
+                dim "符号存在但被关掉；这不能证明已回移，仍需自编内核确认"
             fi
         fi
     done

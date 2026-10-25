@@ -4,7 +4,8 @@
 # 10-build-kernel.sh — 在 openEuler 24.03 上得到一个带 sched_ext 的内核
 #
 # 背景：sched_ext 是 Linux 6.12 才合入主线的。openEuler 24.03 的基线是 6.6，
-#       stock 6.6 里根本没有 CONFIG_SCHED_CLASS_EXT 这个符号。
+#       OLK-6.6 树里既没有 kernel/sched/ext.c，也没有 ext.o，只留了一行
+#       "# CONFIG_SCHED_CLASS_EXT is not set"（符号在、代码不在，改开关无效）。
 #       所以"在 6.6 上使能 sched_ext"只有两条路：
 #
 #         A) 保留 openEuler 24.03 的用户态，换成 6.12+ 主线内核   ← 本脚本实现
@@ -13,6 +14,12 @@
 # A 是"今天就能跑起来"的路，B 是"这个项目真正的研究内容"。
 
 set -euo pipefail
+
+# Resolve the repo root BEFORE any cd. BASH_SOURCE[0] is usually a relative path
+# ("./scripts/10-build-kernel.sh"), so computing it after cd-ing into the kernel
+# source tree silently points at the wrong directory.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 KVER="${KVER:-6.12}"
 JOBS="${JOBS:-$(nproc)}"
@@ -105,7 +112,7 @@ else
     make defconfig
 fi
 
-FRAG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/configs/sched-ext.fragment"
+FRAG="${REPO_ROOT}/configs/sched-ext.fragment"
 [[ -r "$FRAG" ]] || die "找不到配置片段: $FRAG"
 
 log "合并 sched_ext 配置片段"

@@ -22,10 +22,21 @@ cd openeuler-sched-ext
 ## 这个项目要解决什么问题
 
 `sched_ext` 是 **Linux 6.12 才合入主线**的特性，而 openEuler 24.03 LTS 的内核基线是 **6.6**。
-stock 6.6 里不存在 `CONFIG_SCHED_CLASS_EXT` 这个符号 —— 所以"在 6.6 上使能 sched_ext"
-不是改一个配置项，而是要把一整个子系统搬过去。
+24.03 的内核树（`OLK-6.6` 分支）里**连 `kernel/sched/ext.c` 都不存在** —— 所以"在 24.03 上使能
+sched_ext"不是改一个配置项，而是要把一整个子系统搬过去。
 
-详细分析见 **[docs/backport-6.6.md](docs/backport-6.6.md)**。
+**但这件事在 26.09 上有转机**：openEuler 26.09 的 6.6 内核**已经把 sched_ext 回移进来了**
+（`ext.c` 209 KB），只是 `openeuler_defconfig` 里写死 `CONFIG_SCHED_CLASS_EXT=n`。
+所以版本选择直接决定工作量，先看矩阵：
+
+| 版本 | 内核 | `ext.c` | `SCHED_CLASS_EXT` | 开箱可用 |
+|---|---|---|---|---|
+| 24.03 LTS SP4 | 6.6.0-175 | **无** | 符号不存在 | ✗ |
+| 26.09（6.6 内核） | 6.6.0-175.oe2609 | **有** | **`=n`** | ✗ 需重编 |
+| 26.09（6.18 内核） | 6.18.48-0.0.0.15 | 有 | 待实测 | 装包即可 |
+
+完整取证过程（含可复现的 curl 命令）见 **[docs/openeuler-kernel-matrix.md](docs/openeuler-kernel-matrix.md)**。
+回移的工程量分析见 **[docs/backport-6.6.md](docs/backport-6.6.md)**。
 
 ---
 
@@ -48,18 +59,23 @@ cat /sys/kernel/sched_ext/root/ops        # 非空 = 调度器真的在跑
 
 ---
 
-## 两条路线
+## 三条路线
 
-| | 路 A：换 6.12 主线内核 | 路 B：回移进 OLK-6.6 |
-|---|---|---|
-| 用户态 | openEuler 24.03 | openEuler 24.03 |
-| 内核 | 6.12 LTS（含 sched_ext） | openEuler 6.6 + 回移补丁 |
-| 工作量 | 半天（构建 + 验证） | 数周（上万行、数十个 commit） |
-| 用途 | 立刻能研究调度器行为 | 真正给 openEuler 6.6 使能 sched_ext |
-| 脚本 | `10-build-kernel.sh` | 见 `docs/backport-6.6.md` 的 B0–B6 拆分 |
+| | A：24.03 + 自编主线 | B：26.09 + 6.18 包 | C：26.09 + 重编 6.6 |
+|---|---|---|---|
+| 用户态 | openEuler 24.03 | openEuler 26.09 | openEuler 26.09 |
+| 内核 | 6.12 / 6.18 主线（自编） | 6.18.48（发行版包） | 6.6.0-175 + `=y` |
+| 工作量 | 半天 | **十几分钟** | 一次内核构建（1–3 小时） |
+| 回移补丁 | 不需要 | 不需要 | **不需要**（已回移） |
+| 适合 | 追上游、研究调度器行为 | 最快拿到能跑的 sched_ext | 要在 6.6 基线上产品化 |
+| 脚本 | `10-build-kernel.sh` | `dnf install kernel-6.18.48` | `10-build-kernel.sh --source-tree` |
 
-**建议**：先走路 A 把链路跑通，再决定要不要投入路 B。路 A 的产物（配置、验证脚本、观测手段）
-在路 B 里全部可复用。
+**建议顺序：B → A → C。**
+先用 B 在十几分钟内跑通 `20-verify.sh`，再决定要不要为"6.6 基线"这个约束投入 C。
+B 和 C 的完整命令见 `docs/openeuler-kernel-matrix.md` 第四、五节。
+
+> 注意：`dnf` 装上 6.18 不等于 `CONFIG_SCHED_CLASS_EXT=y`。
+> 上游有这个符号，发行版构建时仍可能关掉。**必须用 `ls /sys/kernel/sched_ext` 实测**，不能推断。
 
 ---
 
@@ -111,7 +127,8 @@ sudo dnf install -y gcc make bc bison flex elfutils-libelf-devel \
 │   └── sched-ext.fragment   # Kconfig 片段
 ├── docs/
 │   ├── why-not-wsl.md       # 为什么不能靠 WSL，以及"一键"能到哪一步
-│   └── backport-6.6.md      # 为什么 6.6 开不了，以及两条路线
+│   ├── openeuler-kernel-matrix.md  # 各版本 × sched_ext 支持矩阵（实测核对）
+│   └── backport-6.6.md      # 回移的工程量，以及三条路线
 ├── push.ps1                 # Windows 侧一键发布到 GitHub（5 秒）
 ├── vm-ssh.ps1               # Windows 侧通过 SSH 驱动虚拟机
 ├── .vm.env.example          # 虚拟机连接配置模板
@@ -142,10 +159,20 @@ notepad .vm.env                                   # 填 VM_HOST / VM_USER
 ## 常见问题
 
 **Q: 我的 openEuler 24.03 上 `grep SCHED_CLASS_EXT /boot/config-$(uname -r)` 没输出？**
-正常。6.6 没有这个符号。走 `10-build-kernel.sh`。
+正常。24.03 的内核树里连 `kernel/sched/ext.c` 都没有，符号自然不存在。走 `10-build-kernel.sh`。
+
+**Q: openEuler 26.03 有吗？**
+没有 26.03 **服务器版**。只有 `openEuler Embedded 26.03`（2026 年 3 月，嵌入式/具身智能方向）。
+服务器创新版本是 **26.09**（2026-09-30 发布），双内核 6.6 + 6.18。
+
+**Q: 26.09 上是不是直接就有 sched_ext？**
+一半对。26.09 的 **6.6 内核已经把 sched_ext 回移进来**，但 `CONFIG_SCHED_CLASS_EXT=n` 默认关闭。
+要么装它单独发布的 **6.18.48 内核包**（`dnf install kernel-6.18.48`），要么把 6.6 内核改开关重编。
+两条路都不用写回移补丁。详见 `docs/openeuler-kernel-matrix.md`。
 
 **Q: 一定要装 6.12 吗？**
-sched_ext 首次合入是 6.12。6.12 也是首个含它的 LTS。更高版本当然也行，`-v` 指定即可。
+上游首次合入是 6.12。但**发行版可以自己回移** —— openEuler 26.09 就做了。
+所以「6.6 能不能开 sched_ext」取决于发行版有没有回移，不是内核版本本身。`-v` 指定任意 ≥6.12 版本都行。
 
 **Q: 装完新内核起不来怎么办？**
 用户态完全没动。重启进 GRUB 选回原内核即可。所以在虚拟机里做，先打快照。

@@ -31,9 +31,11 @@ if [[ -r /etc/os-release ]]; then
 
     if [[ "${ID:-}" == "openEuler" ]]; then
         case "${VERSION_ID:-}" in
-            24.03*) ok "openEuler 24.03 基线正确" ;;
+            24.03*) ok "openEuler 24.03 LTS 基线正确（OLK-6.6，无 sched_ext 回移）" ;;
+            26.09*) ok "openEuler 26.09（6.6 内核已回移 sched_ext，但默认 =n）"
+                    dim "也可直接装 6.18 内核包：dnf install kernel-6.18.48" ;;
             22.03*) err "这是 openEuler 22.03（5.10 基线），不是 24.03" ; FAILED=1 ;;
-            *)      warn "openEuler 但不是 24.03（${VERSION_ID}），请自行确认" ;;
+            *)      warn "openEuler 但不是 24.03/26.09（${VERSION_ID}），请自行确认" ;;
         esac
     else
         err "不是 openEuler（ID=${ID:-unknown}）"
@@ -90,12 +92,18 @@ else
         line="$(cfggrep "^${sym}=" )"
         if [[ -z "$line" ]]; then
             warn "${sym} 不存在于配置中"
-            [[ "$sym" == "CONFIG_SCHED_CLASS_EXT" ]] && NEED_BUILD=1
+            if [[ "$sym" == "CONFIG_SCHED_CLASS_EXT" ]]; then
+                NEED_BUILD=1
+                dim "该内核树没有回移 sched_ext（24.03 LTS 即如此）"
+            fi
         elif [[ "$line" == *"=y" ]]; then
             ok "${line}"
         else
             warn "${line}（不是 =y）"
-            [[ "$sym" == "CONFIG_SCHED_CLASS_EXT" ]] && NEED_BUILD=1
+            if [[ "$sym" == "CONFIG_SCHED_CLASS_EXT" ]]; then
+                NEED_BUILD=1
+                dim "符号存在但被关掉 —— 该树已回移，改 =y 重编即可（26.09 即如此）"
+            fi
         fi
     done
 fi
@@ -151,7 +159,9 @@ if (( FAILED )); then
 elif (( NEED_BUILD )); then
     warn "基线正确，但 sched_ext 不可用 → 需要自己构建内核"
     dim "下一步： ./scripts/10-build-kernel.sh --help"
-    dim "背景：   docs/backport-6.6.md"
+    dim "更省事： 在 26.09 上 dnf install kernel-6.18.48（十几分钟，无需编译）"
+    dim "版本矩阵： docs/openeuler-kernel-matrix.md"
+    dim "回移分析： docs/backport-6.6.md"
     exit 1
 else
     ok "sched_ext 已可用，直接跑 ./scripts/20-verify.sh"

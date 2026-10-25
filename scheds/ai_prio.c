@@ -8,7 +8,9 @@
  *   sudo ./ai_prio ./ai_prio.bpf.o <pid> [选项]
  *
  * 选项：
- *   --kick 0|1          唤醒时是否踢目标 CPU（默认 1）
+ *   --kick 0|1          推理任务唤醒时是否踢目标 CPU（默认 1）
+ *   --burst N           推理任务最多连续占几个时间片，超过就让一次（默认 0 = 不限）
+ *   --wake-boost 0|1    普通任务唤醒时插队头并踢核（默认 0）
  *   --ai-slice-us N     推理任务时间片，微秒（默认 20000 = 20 ms）
  *   --other-slice-us N  普通任务时间片，微秒（默认 3000 = 3 ms）
  *   --quiet             不打印每秒统计
@@ -38,6 +40,8 @@
 struct cfg {
 	unsigned int target_pid;
 	unsigned int kick_on_wake;
+	unsigned int ai_burst;
+	unsigned int wake_boost;
 	unsigned long long ai_slice_ns;
 	unsigned long long other_slice_ns;
 };
@@ -54,7 +58,9 @@ static void usage(const char *prog)
 {
 	fprintf(stderr,
 		"用法: sudo %s <ai_prio.bpf.o> <pid> [选项]\n"
-		"  --kick 0|1          唤醒时踢目标 CPU（默认 1）\n"
+		"  --kick 0|1          推理任务唤醒时踢目标 CPU（默认 1）\n"
+		"  --burst N           最多连续占几个时间片（默认 0 = 不限）\n"
+		"  --wake-boost 0|1    普通任务唤醒时插队头并踢核（默认 0）\n"
 		"  --ai-slice-us N     推理任务时间片，微秒（默认 20000）\n"
 		"  --other-slice-us N  普通任务时间片，微秒（默认 3000）\n"
 		"  --quiet             不打印每秒统计\n", prog);
@@ -63,20 +69,21 @@ static void usage(const char *prog)
 static void print_stats(int stats_fd, int nr_cpus)
 {
 	unsigned long long *vals = calloc((size_t)nr_cpus, sizeof(unsigned long long));
-	unsigned long long sum[4] = { 0, 0, 0, 0 };
+	unsigned long long sum[6] = { 0, 0, 0, 0, 0, 0 };
 
 	if (!vals)
 		return;
 
-	for (unsigned int key = 0; key < 4; key++) {
+	for (unsigned int key = 0; key < 6; key++) {
 		if (bpf_map_lookup_elem(stats_fd, &key, vals) != 0)
 			continue;
 		for (int i = 0; i < nr_cpus; i++)
 			sum[key] += vals[i];
 	}
 
-	printf("ai_enq=%-8llu other_enq=%-8llu kick=%-8llu ai_pick=%-8llu\n",
-	       sum[0], sum[1], sum[2], sum[3]);
+	printf("ai_enq=%-8llu other_enq=%-8llu kick=%-8llu "
+	       "ai_pick=%-8llu other_pick=%-8llu boost=%-8llu\n",
+	       sum[0], sum[1], sum[2], sum[3], sum[4], sum[5]);
 	fflush(stdout);
 	free(vals);
 }
@@ -85,6 +92,8 @@ int main(int argc, char **argv)
 {
 	static const struct option opts[] = {
 		{ "kick", required_argument, NULL, 'k' },
+		{ "burst", required_argument, NULL, 'b' },
+		{ "wake-boost", required_argument, NULL, 'w' },
 		{ "ai-slice-us", required_argument, NULL, 'a' },
 		{ "other-slice-us", required_argument, NULL, 'o' },
 		{ "quiet", no_argument, NULL, 'q' },
@@ -94,6 +103,8 @@ int main(int argc, char **argv)
 	struct cfg cfg = {
 		.target_pid = 0,
 		.kick_on_wake = 1,
+		.ai_burst = 0,
+		.wake_boost = 0,
 		.ai_slice_ns = 20000000ULL,
 		.other_slice_ns = 3000000ULL,
 	};
@@ -120,10 +131,16 @@ int main(int argc, char **argv)
 	cfg.target_pid = (unsigned int)target_pid;
 
 	optind = 3;
-	while ((opt = getopt_long(argc, argv, "k:a:o:qh", opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "k:b:w:a:o:qh", opts, NULL)) != -1) {
 		switch (opt) {
 		case 'k':
 			cfg.kick_on_wake = (unsigned int)strtoul(optarg, NULL, 10);
+			break;
+		case 'b':
+			cfg.ai_burst = (unsigned int)strtoul(optarg, NULL, 10);
+			break;
+		case 'w':
+			cfg.wake_boost = (unsigned int)strtoul(optarg, NULL, 10);
 			break;
 		case 'a':
 			cfg.ai_slice_ns = strtoull(optarg, NULL, 10) * 1000ULL;
@@ -188,8 +205,9 @@ int main(int argc, char **argv)
 		goto out;
 	}
 
-	printf("ai_prio 已接管。target_pid=%lu kick=%u ai_slice=%llums other_slice=%llums\n",
-	       target_pid, cfg.kick_on_wake,
+	printf("ai_prio 已接管。target_pid=%lu kick=%u burst=%u boost=%u "
+	       "ai_slice=%llums other_slice=%llums\n",
+	       target_pid, cfg.kick_on_wake, cfg.ai_burst, cfg.wake_boost,
 	       cfg.ai_slice_ns / 1000000ULL, cfg.other_slice_ns / 1000000ULL);
 	printf("查看接管状态：cat /sys/kernel/sched_ext/root/ops\n");
 	printf("Ctrl+C 退出（退出后 CPU 自动回到 CFS）\n\n");

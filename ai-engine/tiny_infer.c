@@ -30,6 +30,7 @@
  *   --interval-ms N  请求间隔毫秒（默认 10）
  *   --passes N       每个请求重复前向次数（默认 16）
  *   --warmup N       预热请求数，不计入统计（默认 50）
+ *   --sla-us N       调度延迟超过 N 微秒算一次超时（默认 0 = 不统计）
  *   --pidfile PATH   启动后把 pid 写进去，供调度器读取
  *   --wait PATH      等这个文件出现才开始计时（实验同步用）
  *   --json           只输出一行机器可读结果
@@ -158,29 +159,31 @@ int main(int argc, char **argv)
 		{ "interval-ms", required_argument, NULL, 'i' },
 		{ "passes", required_argument, NULL, 'p' },
 		{ "warmup", required_argument, NULL, 'w' },
+		{ "sla-us", required_argument, NULL, 'S' },
 		{ "pidfile", required_argument, NULL, 'f' },
 		{ "wait", required_argument, NULL, 'W' },
 		{ "json", no_argument, NULL, 'j' },
 		{ "help", no_argument, NULL, 'h' },
 		{ NULL, 0, NULL, 0 },
 	};
-	int requests = 600, interval_ms = 10, passes = 16, warmup = 50;
+	int requests = 600, interval_ms = 10, passes = 16, warmup = 50, sla_us = 0;
 	const char *pidfile = NULL, *waitfile = NULL;
 	int json = 0, opt;
 
-	while ((opt = getopt_long(argc, argv, "n:i:p:w:f:W:jh", opts, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "n:i:p:w:S:f:W:jh", opts, NULL)) != -1) {
 		switch (opt) {
 		case 'n': requests = atoi(optarg); break;
 		case 'i': interval_ms = atoi(optarg); break;
 		case 'p': passes = atoi(optarg); break;
 		case 'w': warmup = atoi(optarg); break;
+		case 'S': sla_us = atoi(optarg); break;
 		case 'f': pidfile = optarg; break;
 		case 'W': waitfile = optarg; break;
 		case 'j': json = 1; break;
 		default:
 			fprintf(stderr, "用法: %s [--requests N] [--interval-ms N] "
-				"[--passes N] [--warmup N] [--pidfile PATH] "
-				"[--wait PATH] [--json]\n", argv[0]);
+				"[--passes N] [--warmup N] [--sla-us N] "
+				"[--pidfile PATH] [--wait PATH] [--json]\n", argv[0]);
 			return 2;
 		}
 	}
@@ -279,6 +282,23 @@ int main(int argc, char **argv)
 		n++;
 	}
 
+	/*
+	 * 超时计数要在排序之前数：排序之后还得遍历一遍，
+	 * 不如趁着数据还是原始顺序。
+	 *
+	 * 为什么要这个数：p99 在一百个样本里就是"最差的那一个"，
+	 * 一台虚拟机偶尔被宿主机拖住 200 毫秒，p99 立刻变成 200 毫秒，
+	 * 五组数据全被这一个噪声点盖住。改成"超过阈值的有几个"，
+	 * 噪声点只算一次，比例还是稳的。
+	 */
+	int sla_miss = 0;
+
+	if (sla_us > 0) {
+		for (int i = 0; i < n; i++)
+			if (sched[i] > sla_us)
+				sla_miss++;
+	}
+
 	qsort(sched, (size_t)n, sizeof(long long), cmp_ll);
 	qsort(work, (size_t)n, sizeof(long long), cmp_ll);
 
@@ -289,8 +309,9 @@ int main(int argc, char **argv)
 	if (json) {
 		printf("{\"requests\":%d,\"sched_p50_us\":%lld,\"sched_p90_us\":%lld,"
 		       "\"sched_p99_us\":%lld,\"sched_max_us\":%lld,"
-		       "\"work_p50_us\":%lld,\"work_p99_us\":%lld}\n",
-		       n, sp50, sp90, sp99, smax, wp50, wp99);
+		       "\"work_p50_us\":%lld,\"work_p99_us\":%lld,"
+		       "\"sla_us\":%d,\"sla_miss\":%d}\n",
+		       n, sp50, sp90, sp99, smax, wp50, wp99, sla_us, sla_miss);
 	} else {
 		printf("请求数 %d，间隔 %d ms，每请求 %d 次前向，预热 %d\n",
 		       n, interval_ms, passes, warmup);
@@ -301,6 +322,9 @@ int main(int argc, char **argv)
 		printf("  p50=%-6lld p99=%-6lld\n", wp50, wp99);
 		if (early)
 			printf("提前醒来的次数: %d\n", early);
+		if (sla_us > 0)
+			printf("超过 %d 微秒: %d/%d 个请求\n",
+			       sla_us, sla_miss, n);
 		printf("RESULT sched_p50_us=%lld sched_p90_us=%lld sched_p99_us=%lld "
 		       "sched_max_us=%lld work_p50_us=%lld\n",
 		       sp50, sp90, sp99, smax, wp50);

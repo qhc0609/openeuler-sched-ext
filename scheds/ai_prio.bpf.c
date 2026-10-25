@@ -14,10 +14,14 @@
  *   2. enqueue 里踢一下目标 CPU（KICK_PREEMPT）。
  *      → 这是"打断正在跑的人"，比排队靠前更硬。
  *
- *   3. 两个队列的时间片分开配。普通任务给短片，推理任务给长片。
- *      → 这是"减少切换损耗"。
+ *   3. 两个队列的时间片分开配，再加一条"连续占满 N 片就必须让一次"。
+ *      → 这是"预算"：时间片有多长、最多连续占几片，别人最多等多久。
  *
- * 三个机制可以单独开关，第 11 篇就是靠这个做三组对照实验的。
+ *   4. 普通任务唤醒时插队头并踢核（wake_boost）。
+ *      → 这是把 CFS 原本免费提供的"唤醒抢占 + 按欠账排序"补回来。
+ *        换掉调度器等于把 CFS 那套保护拆了，拆了得自己装回去。
+ *
+ * 四个机制可以单独开关，第 10、11 篇就是靠这个做对照实验的。
  *
  * 编译：make ai_prio
  * 运行：sudo ./ai_prio ./ai_prio.bpf.o <推理进程的 pid>
@@ -57,7 +61,9 @@ char _license[] SEC("license") = "GPL";
  * ------------------------------------------------------------------ */
 struct cfg {
 	u32 target_pid;      /* 要优待的进程（0 = 不优待任何人） */
-	u32 kick_on_wake;    /* 1 = 唤醒时打断目标 CPU */
+	u32 kick_on_wake;    /* 1 = 推理任务唤醒时打断目标 CPU */
+	u32 ai_burst;        /* 推理任务最多连续占几个时间片（0 = 不限） */
+	u32 wake_boost;      /* 1 = 普通任务唤醒时插队头并踢核 */
 	u64 ai_slice_ns;     /* 推理任务的时间片，纳秒 */
 	u64 other_slice_ns;  /* 普通任务的时间片，纳秒 */
 };
@@ -70,22 +76,39 @@ struct {
 } cfg_map SEC(".maps");
 
 /* ------------------------------------------------------------------
+ * 每个 CPU 自己的"连续占了几个时间片"计数
+ *
+ * PERCPU_ARRAY 只放一个元素就够：每个 CPU 查到的都是自己那一份，
+ * 不用按 cpu 编号做键，也不用原子操作。
+ * ------------------------------------------------------------------ */
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(key_size, sizeof(u32));
+	__uint(value_size, sizeof(u32));
+	__uint(max_entries, 1);
+} ai_burst SEC(".maps");
+
+/* ------------------------------------------------------------------
  * 统计
  *
- * 四个计数器，分别对应"走到哪一步"：
+ * 五个计数器，分别对应"走到哪一步"：
  *   ST_AI_ENQ    推理任务入队次数
  *   ST_OTHER_ENQ 普通任务入队次数
- *   ST_KICK      踢核次数
+ *   ST_KICK      推理任务唤醒时踢核次数
  *   ST_AI_PICK   dispatch 从 AI 队列取到任务的次数
+ *   ST_OTHER_PICK dispatch 从普通队列取到任务的次数
+ *   ST_WAKE_BOOST 普通任务唤醒时插队头 + 踢核的次数
  *
  * 如果 ST_AI_ENQ 在涨但 ST_AI_PICK 不涨，说明任务入了队却没被优先取走，
  * 那就是 dispatch 的逻辑有问题。分开计数就是为了能这样定位。
+ *
+ * ST_AI_PICK 和 ST_OTHER_PICK 的比例，就是"推理任务占了多少次调度机会"。
  * ------------------------------------------------------------------ */
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(key_size, sizeof(u32));
 	__uint(value_size, sizeof(u64));
-	__uint(max_entries, 4);
+	__uint(max_entries, 6);
 } stats SEC(".maps");
 
 enum {
@@ -93,6 +116,8 @@ enum {
 	ST_OTHER_ENQ = 1,
 	ST_KICK = 2,
 	ST_AI_PICK = 3,
+	ST_OTHER_PICK = 4,
+	ST_WAKE_BOOST = 5,
 };
 
 static __always_inline void stat_inc(u32 idx)
@@ -170,8 +195,35 @@ void BPF_STRUCT_OPS(ai_enqueue, struct task_struct *p, u64 enq_flags)
 	}
 
 	if (!is_ai(p, c)) {
+		u64 fl = enq_flags;
+		bool wake = c->wake_boost && (enq_flags & SCX_ENQ_WAKEUP);
+
 		stat_inc(ST_OTHER_ENQ);
-		scx_bpf_dispatch(p, SHARED_DSQ, c->other_slice_ns, enq_flags);
+
+		/*
+		 * 刚睡醒的任务插到队头。
+		 *
+		 * 全局队列是按入队顺序排的。一个睡了 40 毫秒的交互式任务醒来时，
+		 * 前面可能已经排着 8 个压测线程，每个占 3 毫秒 —— 它要等 24 毫秒。
+		 * CFS 不会有这个问题：它按 vruntime 排序，刚睡醒的任务
+		 * 欠账最少，天然排在最前面。我们换成自己的队列之后，
+		 * 这个"天然"就没了，得自己补。
+		 */
+		if (wake)
+			fl |= SCX_ENQ_HEAD;
+
+		scx_bpf_dispatch(p, SHARED_DSQ, c->other_slice_ns, fl);
+
+		/*
+		 * 再踢一脚，让它所在的那个核立刻重新调度。
+		 * 只对 SCX_ENQ_WAKEUP 做：被抢占后重新入队的任务不踢，
+		 * 否则一次唤醒会引发一连串抢占，白烧 CPU。
+		 */
+		if (wake) {
+			scx_bpf_kick_cpu(scx_bpf_task_cpu(p), KICK_PREEMPT);
+			stat_inc(ST_WAKE_BOOST);
+		}
+
 		return;
 	}
 
@@ -205,17 +257,54 @@ void BPF_STRUCT_OPS(ai_enqueue, struct task_struct *p, u64 enq_flags)
 /* ==================================================================
  * dispatch —— 某个核要挑下一个任务
  *
- * 顺序就是优先级：先 AI 队列，取到了就直接返回，
- * 不再碰普通队列。这一步不能反过来，反过来高优先级就没意义了。
+ * 两条规则，顺序不能换：
+ *
+ *   1. 预算没用完：先取 AI 队列（这是"优先"）
+ *   2. 预算用完了：这一轮先取普通队列（这是"不让它把核焊死"）
+ *
+ * 为什么光有时间片不够：
+ *   时间片到期时，推理任务被重新入队到 AI_DSQ，紧接着 dispatch 又被调用，
+ *   第一条规则一看 AI_DSQ 有人，又把它自己取回来 —— 时间片等于白设。
+ *   一个 40 毫秒的请求就这么把核按住 40 毫秒，别人的 p99 全是几十毫秒。
+ *   第 2 条规则就是为了切断这个循环：连续占满 N 个时间片，必须让一次。
  * ================================================================== */
 void BPF_STRUCT_OPS(ai_dispatch, s32 cpu, struct task_struct *prev)
 {
+	struct cfg *c = get_cfg();
+	u32 zero = 0;
+	u32 *used = bpf_map_lookup_elem(&ai_burst, &zero);
+
+	if (!used) {
+		if (scx_bpf_consume(AI_DSQ)) {
+			stat_inc(ST_AI_PICK);
+			return;
+		}
+		scx_bpf_consume(SHARED_DSQ);
+		return;
+	}
+
+	if (c && c->ai_burst && *used >= c->ai_burst) {
+		if (scx_bpf_consume(SHARED_DSQ)) {
+			*used = 0;
+			stat_inc(ST_OTHER_PICK);
+			return;
+		}
+		/*
+		 * 普通队列是空的：让也没人接，只能继续给推理任务。
+		 * 预算不清零 —— 下一个普通任务一入队，这一轮就轮到它。
+		 */
+	}
+
 	if (scx_bpf_consume(AI_DSQ)) {
+		(*used)++;
 		stat_inc(ST_AI_PICK);
 		return;
 	}
 
-	scx_bpf_consume(SHARED_DSQ);
+	if (scx_bpf_consume(SHARED_DSQ)) {
+		*used = 0;
+		stat_inc(ST_OTHER_PICK);
+	}
 }
 
 /* ==================================================================

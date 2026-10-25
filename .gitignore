@@ -31,3 +31,9 @@ __pycache__/
 *.swp
 *~
 .DS_Store
+
+# scheds/ 的构建产物
+# vmlinux.h 由 bpftool 从当前内核 BTF 导出，换内核就变，不进仓库
+scheds/vmlinux.h
+scheds/minimal
+scheds/minimal.bpf.o

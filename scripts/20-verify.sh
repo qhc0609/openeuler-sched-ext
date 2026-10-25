@@ -51,33 +51,37 @@ else
 fi
 
 hdr "4. 加载一个真实调度器"
-SCX_BIN="$(command -v scx_simple || true)"
+# 允许外部指定： SCX_BIN=/path/to/scx_simple ./scripts/20-verify.sh
+SCX_BIN="${SCX_BIN:-$(command -v scx_simple || true)}"
 if [[ -z "$SCX_BIN" ]]; then
-    for p in "$HOME/scx/target/release/scx_simple" "/usr/bin/scx_simple" \
-             "$HOME/src/scx/target/release/scx_simple"; do
+    # 内核源码树自带的示例最省事（纯 C，不需要 rust）：
+    #   cd ~/src/linux-<ver>/tools/sched_ext && make
+    for p in "$HOME"/src/linux-*/tools/sched_ext/build/bin/scx_simple \
+             /usr/bin/scx_simple \
+             "$HOME"/scx/target/release/scx_simple; do
         [[ -x "$p" ]] && { SCX_BIN="$p"; break; }
     done
 fi
 
 if [[ -z "$SCX_BIN" ]]; then
-    warn "没找到 scx_simple，跳过实机验证"
+    warn "没找到 scx_simple，跳过实机验证（内核层面已通过，但没证明真能接管）"
     cat <<'EOF'
 
-    构建 sched-ext 用户态工具（需要 rust + meson）：
-      sudo dnf install -y rust cargo meson ninja-build clang llvm libbpf-devel bpftool
-      git clone https://github.com/sched-ext/scx ~/scx
-      cd ~/scx && meson setup build && ninja -C build
-      sudo ./build/scx_simple &
+    最省事的办法：用你刚编的内核源码树自带的示例（纯 C，不需要 rust）
+      sudo dnf install -y clang llvm libbpf-devel bpftool
+      cd ~/src/linux-$(uname -r | cut -d. -f1-2)/tools/sched_ext && make
+      sudo ./build/bin/scx_simple &
+      cat /sys/kernel/sched_ext/root/ops      # 应输出 simple
 
-    或者只构建 C 版最小调度器：
-      cd ~/scx && make -C scheds/c
+    注意：不要去 clone sched-ext/scx —— 它已经把 scheds/c 删了、全改 Rust，
+    scx_simple 在那边已经不存在。
 
 EOF
+    SKIPPED=1
 else
     ok "找到 $SCX_BIN"
     echo "    后台启动 10 秒，观察 root/ops ..."
     sudo "$SCX_BIN" >/tmp/scx_simple.log 2>&1 &
-    SCX_PID=$!
     sleep 10
     if [[ -r /sys/kernel/sched_ext/root/ops ]]; then
         ops="$(cat /sys/kernel/sched_ext/root/ops 2>/dev/null || true)"
@@ -90,15 +94,19 @@ else
             RC=1
         fi
     fi
-    sudo kill "$SCX_PID" 2>/dev/null || true
-    wait "$SCX_PID" 2>/dev/null || true
+    # sudo 会把 $! 指向 sudo 自己，直接 kill 那个 pid 可能杀不掉子进程
+    sudo pkill -f 'scx_simple' 2>/dev/null || true
+    sleep 1
     echo "    已停止 scx_simple，CPU 回到 CFS"
 fi
 
 hdr "结论"
-if ((RC == 0)); then
-    ok "sched_ext 验证通过"
-else
+if ((RC != 0)); then
     err "还有项目没通过，见上面的 [FAIL]"
+elif [[ "${SKIPPED:-0}" == "1" ]]; then
+    warn "内核层面通过，但第 4 步被跳过 —— 还没证明调度器真能接管"
+    RC=1
+else
+    ok "sched_ext 验证通过（已实际加载调度器并接管 CPU）"
 fi
 exit "$RC"

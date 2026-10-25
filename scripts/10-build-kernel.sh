@@ -169,8 +169,17 @@ if ((DO_INSTALL)); then
         sudo grub2-mkconfig -o /boot/grub2/grub.cfg
     fi
 
+    NEWKREL="$(make -s kernelrelease)"
+
+    # grub2-mkconfig 只重写菜单，不会改 saved_entry（openEuler 用 GRUB_DEFAULT=saved）。
+    # 不显式设置的话，重启仍然进旧内核 —— 这一条踩过。
+    log "把默认启动项设为 ${NEWKREL}"
+    sudo grubby --set-default "/boot/vmlinuz-${NEWKREL}" \
+        || log "警告: grubby 设置默认项失败，重启时请在 GRUB 菜单里手动选 ${NEWKREL}"
+    grubby --default-kernel
+
     log "重建 initramfs"
-    sudo dracut -f --kver "$(make -s kernelrelease)"
+    sudo dracut -f --kver "$NEWKREL"
 
     cat <<EOF
 

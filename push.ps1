@@ -170,7 +170,18 @@ function Push-Robust {
         Say '未检测到代理，仅尝试直连'
     }
 
-    # 代理变量删不掉的环境，直连根本发不出去，别浪费 21 秒一次的超时
+    # 先探一次：代理变量到底能不能清掉。必须在循环之前探，
+    # 否则第一轮会先打上"直连"的标签，然后才发现根本清不掉。
+    if ($haveProxy -and -not $script:DirectBlocked) {
+        $orig = [Environment]::GetEnvironmentVariable('http_proxy')
+        [Environment]::SetEnvironmentVariable('http_proxy', $null)
+        if ([Environment]::GetEnvironmentVariable('http_proxy')) {
+            $script:DirectBlocked = $true
+        } else {
+            [Environment]::SetEnvironmentVariable('http_proxy', $orig)
+        }
+    }
+
     $canDirect = -not $script:DirectBlocked
     if ($haveProxy -and -not $canDirect) {
         Warn '该环境的代理变量无法清除（被强制注入），只能走代理'
@@ -192,8 +203,14 @@ function Push-Robust {
             return $true
         }
 
-        $lines = @($r.Output | Where-Object { "$_".Trim() })
-        if ($lines.Count -gt 0) { $lastMsg = ("$($lines[-1])").Trim() }
+        # git 的报错常是多行，最后一行往往只是残句（"and the repository exists."）。
+        # 优先取带 fatal:/error: 的那一行，才有信息量。
+        $lines = @($r.Output | ForEach-Object { "$_" } | Where-Object { $_.Trim() })
+        if ($lines.Count -gt 0) {
+            $pick = ($lines | Where-Object { $_ -match 'fatal:|error:|ERROR' } | Select-Object -First 1)
+            if (-not $pick) { $pick = $lines[-1] }
+            $lastMsg = $pick.Trim()
+        }
         Warn "失败: $lastMsg"
 
         # 已经是 up-to-date 也算成功
@@ -212,14 +229,47 @@ function Push-Robust {
 }
 
 <#
+  读远端分支当前的 commit sha。
+  走 api.github.com —— 实测它比 github.com 稳定得多，github.com 抖的时候
+  它照样通，所以"到底推上去了没有"这个问题应该由它来回答。
+#>
+function Get-RemoteHead {
+    param([string]$Full, [string]$Branch = 'main')
+    if (-not $Full) { return $null }
+    for ($i = 1; $i -le 3; $i++) {
+        $r = Invoke-Native 'gh' @('api', "repos/$Full/git/refs/heads/$Branch", '--jq', '.object.sha')
+        if ($r.Code -eq 0) {
+            $sha = ("$($r.Output)" -split "`n" | Where-Object { $_ -match '\S' } | Select-Object -First 1)
+            if ($sha) { return $sha.Trim() }
+        }
+        if ($i -lt 3) { Start-Sleep -Seconds (2 * $i) }
+    }
+    return $null
+}
+
+<#
   按 -Watch 决定是"试一次"还是"挂着一直试"。
+  推送前先用 API 比一次：远端已经是本地 HEAD 就直接收工 —— github.com
+  不通的时候这一句能省掉全部重试。
 #>
 function Invoke-PushPhase {
     param(
         [string]$Remote = 'origin',
         [string]$Branch = 'main',
-        [string[]]$ExtraArgs = @()
+        [string[]]$ExtraArgs = @(),
+        [string]$Full = ''
     )
+
+    $local = (& git rev-parse HEAD 2>$null)
+    if ($local) { $local = $local.Trim() }
+    $remote = Get-RemoteHead -Full $Full -Branch $Branch
+    if ($local -and $remote) {
+        if ($remote -eq $local) {
+            Good "远端已是最新（$($local.Substring(0,7))），无需推送"
+            return $true
+        }
+        Say "远端 $($remote.Substring(0,7)) → 本地 $($local.Substring(0,7))，需要推送"
+    }
 
     if ($Watch -le 0) {
         if (Push-Robust -Remote $Remote -Branch $Branch -ExtraArgs $ExtraArgs) { return $true }
@@ -249,15 +299,33 @@ function Invoke-PushPhase {
 <#
   核对远端分支是否真的指向本地 HEAD。
   这是唯一能证明「推上去了」的判据 —— git push 返回 0 也可能只是 no-op。
+
+  优先用 gh api（走 api.github.com，实测比 github.com 稳定得多），
+  失败才退回 git ls-remote。用 ls-remote 单打独斗会在 github.com 抖动时
+  误报「不一致」，把一次成功的推送说成失败。
 #>
 function Confirm-Push {
-    param([string]$Remote = 'origin', [string]$Branch = 'main')
+    param([string]$Remote = 'origin', [string]$Branch = 'main', [string]$Full = '')
 
     $local = (& git rev-parse HEAD 2>$null)
     if (-not $local) { Warn '拿不到本地 HEAD，跳过核对'; return $false }
     $local = $local.Trim()
 
     Say '核对远端与本地是否一致'
+
+    if ($Full) {
+        $sha = Get-RemoteHead -Full $Full -Branch $Branch
+        if ($sha) {
+            if ($sha -eq $local) {
+                Good "远端 HEAD = 本地 HEAD = $($local.Substring(0,7))（经 api.github.com 核对）"
+                return $true
+            }
+            Warn "不一致：远端 $($sha.Substring(0,[Math]::Min(7,$sha.Length))) / 本地 $($local.Substring(0,7))"
+            return $false
+        }
+        Say 'gh api 核对未成功，退回 git ls-remote'
+    }
+
     for ($i = 1; $i -le 4; $i++) {
         $useProxy = (Test-ProxyAvailable) -and ($script:DirectBlocked -or ($i % 2 -eq 0))
         $envs = if ($useProxy) { $ProxyEnv } else { $DirectEnv }
@@ -406,7 +474,7 @@ if ($exists) {
     } else {
         $null = Invoke-Native 'git' @('remote', 'add', 'origin', "https://github.com/$full.git")
     }
-    if (-not (Invoke-PushPhase -Remote 'origin' -Branch 'main')) { exit 1 }
+    if (-not (Invoke-PushPhase -Remote 'origin' -Branch 'main' -Full $full)) { exit 1 }
 } else {
     Say '在 GitHub 创建仓库（先不推送）'
     $vis = '--public'
@@ -427,11 +495,11 @@ if ($exists) {
         exit 1
     }
     # 仓库建好后再用带重试的推送，而不是让 gh 一次定生死
-    if (-not (Invoke-PushPhase -Remote 'origin' -Branch 'main' -ExtraArgs @('-u'))) { exit 1 }
+    if (-not (Invoke-PushPhase -Remote 'origin' -Branch 'main' -ExtraArgs @('-u') -Full $full)) { exit 1 }
 }
 
 # ---------------------------------------------------------------- 收尾
-$verified = Confirm-Push -Remote 'origin' -Branch 'main'
+$verified = Confirm-Push -Remote 'origin' -Branch 'main' -Full $full
 
 $url = "https://github.com/$full"
 Write-Host ''

@@ -38,6 +38,26 @@ sched_ext"不是改一个配置项，而是要把一整个子系统搬过去。
 完整取证过程（含可复现的 curl 命令）见 **[docs/openeuler-kernel-matrix.md](docs/openeuler-kernel-matrix.md)**。
 回移的工程量分析见 **[docs/backport-6.6.md](docs/backport-6.6.md)**。
 
+### 已实测（真机输出，非推断）
+
+在 VMware 里装好 openEuler 24.03 LTS SP4 后实测，三条判据全否：
+
+```console
+$ uname -r
+6.6.0-159.4.3.154.oe2403sp4.x86_64          # ✅ 是 6.6，不是 5.12
+
+$ grep SCHED_CLASS_EXT /boot/config-$(uname -r)
+# CONFIG_SCHED_CLASS_EXT is not set          # ❌ 没编进去
+
+$ ls -d /sys/kernel/sched_ext
+ls: cannot access '/sys/kernel/sched_ext'    # ❌ 运行时没有
+
+$ grep -ci 'scx_' /proc/kallsyms
+0                                            # ❌ 连代码都没有
+```
+
+完整记录见 **[docs/verified-24.03-sp4.md](docs/verified-24.03-sp4.md)**。
+
 ---
 
 ## 三步验证链路
@@ -128,6 +148,7 @@ sudo dnf install -y gcc make bc bison flex elfutils-libelf-devel \
 ├── docs/
 │   ├── why-not-wsl.md       # 为什么不能靠 WSL，以及"一键"能到哪一步
 │   ├── openeuler-kernel-matrix.md  # 各版本 × sched_ext 支持矩阵（实测核对）
+│   ├── verified-24.03-sp4.md       # 24.03 LTS SP4 真机实测原始输出
 │   └── backport-6.6.md      # 回移的工程量，以及三条路线
 ├── push.ps1                 # Windows 侧一键发布到 GitHub（5 秒）
 ├── vm-ssh.ps1               # Windows 侧通过 SSH 驱动虚拟机

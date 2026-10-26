@@ -28,8 +28,12 @@ REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def git(*args):
+    # core.quotepath=false：文件名里有中文时，git 默认会把路径转义成
+    # "articles/\344\270\272..."，这种字符串再喂回 rev-parse 就找不到对象。
+    # 关掉转义，路径才是原样的 UTF-8。
     out = subprocess.run(
-        [GIT, *args], cwd=REPO_DIR, capture_output=True, check=True
+        [GIT, "-c", "core.quotepath=false", *args],
+        cwd=REPO_DIR, capture_output=True, check=True,
     )
     return out.stdout
 
@@ -99,7 +103,12 @@ def main():
     print("  committer  : %s" % committer)
 
     # --- 1. which paths differ from the parent -------------------------
-    diff = git("diff", "--name-only", "%s..HEAD" % parent).decode().split()
+    # -z：用 \0 分隔，路径里有空格也不会被拆开
+    diff = [
+        p.decode("utf-8")
+        for p in git("diff", "--name-only", "-z", "%s..HEAD" % parent).split(b"\0")
+        if p
+    ]
     if not diff:
         print("nothing to push: HEAD == parent")
         return

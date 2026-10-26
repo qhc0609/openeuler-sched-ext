@@ -42,3 +42,4 @@ scheds/ai_prio
 # ai-engine/ 的构建产物
 ai-engine/tiny_infer
 ai-engine/loadgen
+ai-engine/sleep-over

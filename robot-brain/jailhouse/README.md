@@ -1,143 +1,115 @@
-# 真机部署：Jailhouse 版大小脑
+# Jailhouse 版大小脑：多系统混合部署
 
-**这里的所有内容都没有验证过。** 原因写在下面第一节，先看完再动手。
+## 一、先把"多系统"这件事说清楚
 
-## 一、为什么在虚拟机上跑不了
+Linux 上跑两个进程，**不是**多系统。两个进程共用一套页表、一个内核、一个调度器。小脑那个线程被抢，大脑也跟着卡——因为它们是同一个系统里的两个对象。
 
-Jailhouse 的启动过程是这样的：
+Jailhouse 做的是另一件事：**把一台物理机切成几个互不相干的系统**。
 
-1. 作为 Linux 内核模块加载（`jailhouse.ko`）
-2. 它接管所有 CPU，把当前的 Linux 降级成一个 cell（root cell）
-3. 之后新建的每个 cell 拿到**独占的物理核**和**独占的物理内存区间**
-4. 它自己进入 VMX root 模式，用 EPT 做两阶段地址翻译
+| | 两个进程（`transport_shm.c`） | 两个 cell（`transport_ivshmem.c`） |
+|---|---|---|
+| 小脑是什么 | Linux 里的一个线程 | **另一个操作系统**，有自己的内核 |
+| CPU | 和大脑共用 4 个核，靠调度器分 | 独占物理核，别的 cell 碰不到 |
+| 内存 | 同一套页表，靠权限位隔离 | 独立的物理内存区间，EPT 隔离 |
+| 互相影响 | 小脑卡住，大脑一起卡 | 小脑崩了，大脑继续跑 |
+| 唯一的共享 | 共享内存段 | 一段 ivshmem，就 64 KB |
+| 出问题怎么查 | 看同一个 dmesg | 各看各的串口 |
 
-第 2 步和第 4 步要求 CPU 暴露 `vmx`（Intel）或 `svm`（AMD）。当前的 VMware 虚拟机：
+所以"混合部署"这四个字，在 Jailhouse 里的具体含义是：
 
 ```
-$ grep -o -m1 -E "vmx|svm" /proc/cpuinfo
-（无输出）
-$ ls /dev/kvm
-（不存在）
-$ grep -m1 flags /proc/cpuinfo | tr ' ' '\n' | grep hypervisor
-hypervisor
+物理核 0,1  ──►  Cell 0 (root)  ──►  openEuler + 大脑进程
+物理核 2    ──►  Cell 1         ──►  FreeRTOS/Zephyr + 小脑控制环
+物理内存    ──►  各自一段，互不可见
+0x3e000000  ──►  两边都映射这一段，64 KB  ← 这是唯一的通道
 ```
 
-只有 `hypervisor` 这一位，说明这台机器自己就是别人的 guest，而且宿主没有把虚拟化扩展透传下来。**这不是配置错误，是宿主设置。**
+那段 64 KB 在两个 cell 的配置里各写一次，指向同一个物理地址。**这就是"共享"的全部含义**——hypervisor 不转发任何消息，它只是允许两个系统看到同一块内存。
 
-同一台机器上也查过 Bao：它支持 ARMv8-A / ARMv7-A / ARMv8-R / RISC-V / Tricore / RH850，**没有 x86 版本**，所以连试都不用试。
+大脑往这段内存里写轨迹，然后写 ivshmem 的 BAR0 触发一个中断；小脑收到中断，从同一段内存里读。反过来也一样。
 
-## 二、想真跑，先解决硬件
+## 二、现在卡在哪
 
-### 方案 A：打开嵌套虚拟化
+`check-host.sh` 在当前开发机上的实际输出：
 
-宿主 CPU 是 i5-7300HQ，支持 VT-x，缺的只是 VMware 没透传。
+```
+  1) 硬件虚拟化扩展
+  [NO]   vmx / svm                 都没有 —— Jailhouse 无法初始化
+  2) 虚拟化嵌套状态
+  [!]    hypervisor 标志            这台机器自己就是 guest
+  3) 核数预算
+  [OK]   可用核数                  4 个
+  4) 内存预算
+  [OK]   内存                      7430 MB
+  5) 构建依赖
+  [OK]   gcc / make / git / python3 / 内核头文件
+  结论：NO-GO —— 有 1 项硬性条件不满足
+```
+
+宿主是 i5-7300HQ，支持 VT-x，但 VMware 没把它透传进虚拟机。这一项不是装软件能解决的。
+
+另外这台机器连不上 github，Jailhouse 源码都取不到。
+
+## 三、怎么解决
+
+### 方案 A：打开嵌套虚拟化（5 分钟）
 
 1. 虚拟机**彻底关机**（不是重启）
 2. 虚拟机设置 → 处理器 → 勾选「虚拟化 Intel VT-x/EPT 或 AMD-V/RVI」
-3. 开机后 `grep -o vmx /proc/cpuinfo | head -1` 应当有输出
+3. 开机后 `bash jailhouse/check-host.sh` 应当从 NO-GO 变 GO
 
-**但即使打开了也不建议走这条路**：这台机器只有 4 个物理核，Jailhouse 要给 root cell 和 inmate 各分至少一个独占核，宿主 Windows 还要用。实测环境里跑出来的时序数据会被宿主调度污染得一塌糊涂，没有参考价值。
+⚠️ 即使变成 GO，这台机器只有 4 个物理核，root cell 要 2 个、inmate 要 1 个，宿主 Windows 还要用。**能跑起来，但时序数据不可信。**
 
-### 方案 B：买一块支持的板子（推荐）
-
-Bao 和 Jailhouse 都支持、且便宜的板子：
+### 方案 B：换一块支持的板子（推荐）
 
 | 板子 | 价格量级 | 说明 |
 |---|---|---|
-| Raspberry Pi 4 | 几百元 | Jailhouse 和 Bao 都支持，社区资料最多 |
-| i.MX8M Plus EVK | 一两千元 | Bao 官方支持，工业场景常用 |
-| Zynq UltraScale+ ZCU102 | 较贵 | 两个都支持，适合做严肃验证 |
+| Raspberry Pi 4 | 几百元 | Jailhouse / Bao 都支持，资料最多 |
+| i.MX8M Plus EVK | 一两千元 | 工业场景常用 |
+| Zynq UltraScale+ ZCU102 | 较贵 | 做严肃验证用 |
 
-有了真板子，`test/` 下四组测试的脚本可以照搬，只需要把 `--transport` 换掉。
+### 方案 C：x86 工控机
 
-## 三、真机上的步骤
+任何带 VT-x 的 Intel 工控机都行，Jailhouse 在 x86 上是最成熟的。二手的几百块。
 
-### 1. 确认硬件支持
-
-```bash
-# x86
-grep -o -m1 -E 'vmx|svm' /proc/cpuinfo
-# ARM64：需要 EL2，看 dmesg 里有没有 "CPU: ... EL2"
-dmesg | grep -i 'virtualization\|EL2'
-```
-
-### 2. 编译并加载 Jailhouse
+## 四、硬件到位后怎么跑
 
 ```bash
-git clone https://github.com/siemens/jailhouse
-cd jailhouse
-make
-sudo insmod hypervisor/jailhouse.ko
-sudo tools/jailhouse hardware check    # 会告诉你哪些资源能用
+bash jailhouse/check-host.sh        # 先确认 GO
+sudo bash jailhouse/deploy.sh build      # 取源码 + 编译
+sudo bash jailhouse/deploy.sh rootcell   # 生成 root cell 配置
+#   → 把生成的配置里的内存区、PCI BDF、GIC 地址抄进 robot-cell.c
+sudo bash jailhouse/deploy.sh up         # 建 ivshmem、建 cell、启动小脑
+sudo bash jailhouse/deploy.sh brain      # 在 root cell 里跑大脑
+sudo bash jailhouse/deploy.sh down       # 拆掉
 ```
 
-### 3. 生成 root cell 配置
+`deploy.sh` 里每一步都做了检查，失败会停在原地并说清原因。
 
-```bash
-sudo tools/jailhouse config create -o rootcell.cell rootcell.c
-```
+## 五、小脑镜像从哪来
 
-从生成的配置里抄出：可用的 RAM 区间、PCI 设备的 BDF、GIC 地址、串口地址。
+小脑跑在 inmate 里，需要一个裸机可执行的镜像。两条路：
 
-### 4. 填 `robot-cell.c`
+**路一：用现成 RTOS。** FreeRTOS 和 Zephyr 都有 Jailhouse 的移植，官方 `inmates/` 目录里有示例。把 `cerebellum.c` 里的控制环搬过去——插值、限幅、看门狗、状态机都不依赖 Linux，只要把 `clock_nanosleep` 换成 RTOS 的定时器、`rb_cmd_pop` 照搬。
 
-`robot-cell.c` 里每个 `TODO` 都要按实际板子替换。重点两处：
+**路二：裸机。** 直接写一个 `-ffreestanding -nostdlib` 的程序，自己配 IDT 和 APIC 定时器。Jailhouse 的 `inmates/demo.c` 是最小参考。
 
-- **`cpus`** —— 小脑独占的物理核，位图，不能和 root cell 重叠
-- **`mem_regions[3]`** —— 通信区，64 KB，必须 4 KB 对齐，且**在 root cell 配置里也要出现一次，指向同一段物理地址**
+两条路都只需要改 `transport` 这一层：把 `transport_shm.c` 换成 `transport_ivshmem.c`，`include/shm_proto.h` 一行不用改。
 
-### 5. 在 root cell 里创建 ivshmem 设备
+## 六、和 Bao 的关系
 
-```bash
-sudo tools/jailhouse cell create robot.cell
-lspci | grep -i shmem        # 找到 ivshmem 的 BDF
-```
+Bao 的 IVC 和 ivshmem 是同一个形状（共享内存 + 通知）。要换过去只改两处：设备路径、doorbell 的写法。
 
-把它填回 `robot-cell.c` 的 `pci_devices[0].bdf`。
+但 **Bao 没有 x86 版本**——官方支持 ARMv8-A / ARMv7-A / ARMv8-R / RISC-V / Tricore / RH850。想试 Bao 必须先有 ARM 板子。
 
-### 6. 准备小脑镜像
+## 七、这份代码的验证状态
 
-小脑要跑在 inmate 里，需要一个裸机可执行的镜像。两条路：
+| 部分 | 状态 |
+|---|---|
+| `check-host.sh` | 已在本机跑过，正确报出 NO-GO |
+| `deploy.sh` | 未跑过（没有硬件） |
+| `robot-cell.c` | 模板，不能直接编译，要按板子填 TODO |
+| `transport_ivshmem.c` | 编译通过，未运行 |
+| `cerebellum.c` / `brain.c` / `shm_proto.h` | 已在载体 A 上实测 |
 
-- **FreeRTOS / Zephyr**：官方有 ivshmem 的驱动示例，改一改就能用
-- **从现有代码裁**：`cerebellum.c` 里的插值、限幅、看门狗、状态机都不依赖 Linux，把 `clock_nanosleep` 换成 RTOS 的定时器、`rb_cmd_pop` 照搬即可
-
-镜像要链接到 `mem_regions[0].phys_start`。
-
-### 7. 跑起来
-
-```bash
-# root cell（大脑）
-bin/brain --transport ivshmem:/sys/bus/pci/devices/0000:00:01.0 --hz 20
-
-# inmate（小脑）
-sudo tools/jailhouse cell load robot-cerebellum cerebellum.bin
-sudo tools/jailhouse cell start robot-cerebellum
-```
-
-`--transport` 换成 ivshmem 之后，`include/shm_proto.h` 一行都不用改——这就是当初把传输层抽出来的原因。
-
-## 四、换成 Bao 要改什么
-
-Bao 的 IVC（inter-VM communication）和 ivshmem 是同一个形状：一段共享内存 + 一个通知机制。要改的只有两处：
-
-1. 设备路径：Bao 的共享内存区域在 VM 配置（dtsi / JSON）里定义，guest 侧通过 `bao-ipc` 驱动暴露的设备节点访问
-2. doorbell：ivshmem 是写 BAR0 触发 MSI，Bao 是写 IVC 的通知寄存器
-
-`transport_ivshmem.c` 里的 `notify` 和 `wait` 两个函数换掉就行，其余不动。
-
-但 Bao 没有 x86 版本，要试它必须先有 ARM 板子。
-
-## 五、时钟问题
-
-两个 cell 的 `CLOCK_MONOTONIC` 不同源，`t_gen_ns` 的差值会变成无意义的数。
-
-`cerebellum.c` 里已经处理了：
-
-```c
-if (gen > 0 && t_end > gen && t_end - gen < 1000000000ull) {
-    /* 差值在 1 秒内才认为是同一时钟，否则不计入 */
-}
-```
-
-上真机后如果发现计划年龄一直是 0，说明两边时钟差太多，需要加一个偏移估计（类似 PTP 的做法：来回打时间戳，取最小往返的一半作为偏移）。
+前四项不是"应该能跑"，是"没跑过"。上板子后大概率要现场调，尤其 `robot-cell.c` 里的物理地址和中断号。

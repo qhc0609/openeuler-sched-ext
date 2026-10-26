@@ -43,7 +43,15 @@ bash test/run-latency.sh 6   # 推理耗时对动作的影响
 
 Jailhouse 要求 CPU 暴露 `vmx`/`svm` 并由它独占物理核与内存映射，当前开发用的 VMware 虚拟机两者都没有。同一台机器上也试过 Bao，它根本没有 x86 版本。
 
-这段代码是按 Jailhouse 的 ivshmem 约定写的，上裸机后需要现场调试。详见 `jailhouse/README.md` 和 `docs/architecture.md` 第一节。
+想确认自己的机器行不行，跑一条命令：
+
+```bash
+bash jailhouse/check-host.sh
+```
+
+它会逐项检查 vmx/svm、嵌套状态、核数、内存、构建依赖，最后给 GO / NO-GO。在当前这台开发机上的实际结果是 **NO-GO，卡在 vmx**。
+
+硬件到位之后，`jailhouse/deploy.sh` 是完整的部署序列（build → rootcell → up → brain → down），每一步都带检查。
 
 **这不影响架构本身的验证**：协议层、时间语义、降级逻辑都已经在载体 A 上测过，换载体只替换传输后端。
 

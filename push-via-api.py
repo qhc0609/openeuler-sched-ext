@@ -92,9 +92,14 @@ def split_ident(ident):
 
 
 def main():
-    raw = git("cat-file", "commit", "HEAD")
+    # 默认推 HEAD；也可以显式给一个提交，用来按顺序推一串还没上去的提交。
+    # 必须一个一个来：base_tree 要在远端存在，否则 GitHub 报
+    # "base_tree is not a valid tree oid"。
+    target = sys.argv[1] if len(sys.argv) > 1 else "HEAD"
+
+    raw = git("cat-file", "commit", target)
     tree, parent, author, committer, message = parse_commit(raw)
-    local_sha = git("rev-parse", "HEAD").decode().strip()
+    local_sha = git("rev-parse", target).decode().strip()
 
     print("local commit : %s" % local_sha)
     print("  tree       : %s" % tree)
@@ -106,19 +111,19 @@ def main():
     # -z：用 \0 分隔，路径里有空格也不会被拆开
     diff = [
         p.decode("utf-8")
-        for p in git("diff", "--name-only", "-z", "%s..HEAD" % parent).split(b"\0")
+        for p in git("diff", "--name-only", "-z", "%s..%s" % (parent, target)).split(b"\0")
         if p
     ]
     if not diff:
-        print("nothing to push: HEAD == parent")
+        print("nothing to push: %s == parent" % target)
         return
 
     # --- 2. upload a blob per changed file, verify hash ----------------
     entries = []
     for path in diff:
-        blob_sha = git("rev-parse", "HEAD:%s" % path).decode().strip()
-        mode = git("ls-tree", "HEAD", "--", path).decode().split()[0]
-        content = git("cat-file", "blob", "HEAD:%s" % path)
+        blob_sha = git("rev-parse", "%s:%s" % (target, path)).decode().strip()
+        mode = git("ls-tree", target, "--", path).decode().split()[0]
+        content = git("cat-file", "blob", "%s:%s" % (target, path))
         print("\nblob %-24s %8d bytes  %s" % (path, len(content), blob_sha[:12]))
 
         got = gh_api(

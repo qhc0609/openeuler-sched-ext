@@ -1,0 +1,19 @@
+== 三、采样做热点分析 ==
+被观察的程序：三段，heavy 约占 70%、branchy 约 20%、light 约 10%
+
+iters=5925 sink=109896320831.250
+[ perf record: Woken up 1 times to write data ]
+[ perf record: Captured and wrote 0.228 MB perf.data (3600 samples) ]
+
+--- 按函数汇总 ---
+    62.33%  hotloop  hotloop            [.] phase_heavy
+    34.94%  hotloop  hotloop            [.] phase_branchy
+     2.42%  hotloop  hotloop            [.] phase_light
+
+--- 进到 phase_heavy 里，按指令归属 ---
+   73.93 :   401360: cmp    $0x8000,%rax
+   25.49 :   40135c: vaddss %xmm0,%xmm1,%xmm1
+    0.31 :   401348: vmovss 0x40e060(%rax),%xmm0
+    0.18 :   401358: add    $0x4,%rax
+    0.09 :   401350: vmulss 0x406060(%rax),%xmm0,%xmm0
+    0.00 :   401371: ret

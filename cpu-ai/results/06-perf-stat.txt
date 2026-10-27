@@ -1,0 +1,16 @@
+== 一、硬件计数器：逐个试 ==
+cycles           不可用
+instructions     不可用
+branches         不可用
+branch-misses    不可用
+cache-misses     不可用
+
+perf_event_paranoid = 2
+
+== 二、软件事件：这些是可用的 ==
+          1,376.18 msec task-clock                       #    0.918 CPUs utilized             
+                12      context-switches                 #    8.720 /sec                      
+                76      page-faults                      #   55.225 /sec                      
+       1.498576229 seconds time elapsed
+       1.360847000 seconds user
+       0.000000000 seconds sys

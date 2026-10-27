@@ -1,0 +1,9 @@
+== 环境 ==
+Linux 6.12.0 x86_64
+model name	: Intel(R) Core(TM) i5-7300HQ CPU @ 2.50GHz
+vCPU: 4
+gcc (GCC) 12.3.1 (openEuler 12.3.1-110.oe2403sp4)
+clang version 17.0.6 ( 17.0.6-67.oe2403sp4)
+qemu-aarch64 version 8.2.0
+perf: perf version 6.6.0-159.4.19.173.oe2403sp4.x86_64
+绑定核: 2

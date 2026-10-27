@@ -1,0 +1,14 @@
+== qemu-aarch64 下的数值校验（时间无意义，只看对不对） ==
+neon=6129 scalar=6129 equal=1
+退出码: 0
+
+== NEON 内层循环的指令 ==
+  2102d4: 4e24ccc0     	fmla	v0.4s, v6.4s, v4.4s
+  2102d8: acc24570     	ldp	q16, q17, [x11], #0x40
+  2102dc: 4e25cce1     	fmla	v1.4s, v7.4s, v5.4s
+  2102e0: acc24d92     	ldp	q18, q19, [x12], #0x40
+  2102e4: 4e30ce42     	fmla	v2.4s, v18.4s, v16.4s
+  2102e8: 4e31ce63     	fmla	v3.4s, v19.4s, v17.4s
+  2102ec: 54fffec3     	b.lo	0x2102c4 <_start+0xf8>
+  2102f0: 4e23d442     	fadd	v2.4s, v2.4s, v3.4s
+  2102f4: aa1f03ea     	mov	x10, xzr

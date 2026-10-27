@@ -1,0 +1,17 @@
+== 四、反汇编：热点函数到底在做什么 ==
+0000000000401330 <phase_heavy>:
+  401330:	mov    $0x18,%edx
+  401335:	vxorps %xmm1,%xmm1,%xmm1
+  401339:	nopl   0x0(%rax)
+  401340:	xor    %eax,%eax
+  401342:	nopw   0x0(%rax,%rax,1)
+  401348:	vmovss 0x40e060(%rax),%xmm0
+  401350:	vmulss 0x406060(%rax),%xmm0,%xmm0
+  401358:	add    $0x4,%rax
+  40135c:	vaddss %xmm0,%xmm1,%xmm1
+  401360:	cmp    $0x8000,%rax
+  401366:	jne    401348 <phase_heavy+0x18>
+  401368:	sub    $0x1,%edx
+  40136b:	jne    401340 <phase_heavy+0x10>
+  40136d:	vmovaps %xmm1,%xmm0
+  401371:	ret

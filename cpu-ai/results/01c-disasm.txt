@@ -1,0 +1,46 @@
+== 三个函数编译出来是什么 ==
+  gcc -O2 -fno-tree-vectorize -o bin/oneline src/oneline.c
+  objdump -d --no-show-raw-insn bin/oneline
+
+0000000000401840 <add>:
+  401840:	lea    (%rdi,%rsi,1),%eax
+  401843:	ret
+  401844:	data16 cs nopw 0x0(%rax,%rax,1)
+  40184f:	nop
+
+0000000000401850 <sum_int>:
+  401850:	test   %rsi,%rsi
+  401853:	jle    401870 <sum_int+0x20>
+  401855:	lea    (%rdi,%rsi,4),%rcx
+  401859:	xor    %eax,%eax
+  40185b:	nopl   0x0(%rax,%rax,1)
+  401860:	movslq (%rdi),%rdx
+  401863:	add    $0x4,%rdi
+  401867:	add    %rdx,%rax
+  40186a:	cmp    %rcx,%rdi
+  40186d:	jne    401860 <sum_int+0x10>
+  40186f:	ret
+  401870:	xor    %eax,%eax
+  401872:	ret
+  401873:	data16 cs nopw 0x0(%rax,%rax,1)
+  40187e:	xchg   %ax,%ax
+
+0000000000401880 <dot_f32>:
+  401880:	test   %rdx,%rdx
+  401883:	jle    4018b0 <dot_f32+0x30>
+  401885:	xor    %eax,%eax
+  401887:	pxor   %xmm1,%xmm1
+  40188b:	nopl   0x0(%rax,%rax,1)
+  401890:	movss  (%rdi,%rax,4),%xmm0
+  401895:	mulss  (%rsi,%rax,4),%xmm0
+  40189a:	add    $0x1,%rax
+  40189e:	addss  %xmm0,%xmm1
+  4018a2:	cmp    %rax,%rdx
+  4018a5:	jne    401890 <dot_f32+0x10>
+  4018a7:	movaps %xmm1,%xmm0
+  4018aa:	ret
+  4018ab:	nopl   0x0(%rax,%rax,1)
+  4018b0:	pxor   %xmm1,%xmm1
+  4018b4:	movaps %xmm1,%xmm0
+  4018b7:	ret
+

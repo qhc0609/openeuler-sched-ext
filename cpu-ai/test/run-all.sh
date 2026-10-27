@@ -37,9 +37,20 @@ run() {
 }
 
 run 01-stage5     "$BIN/stage5"
+run 01b-oneline   "$BIN/oneline"
 run 02-dtype      "$BIN/dtype"
 run 03-gemm       "$BIN/gemm"
 run 04-bottleneck "$BIN/bottleneck"
+
+echo "== 01c-disasm =="
+{
+    echo "== 三个函数编译出来是什么 =="
+    echo "  gcc -O2 -fno-tree-vectorize -c src/oneline.c"
+    echo
+    objdump -d --no-show-raw-insn "$BIN/oneline" |
+        sed -n '/<add>:/,/^$/p;/<sum_int>:/,/^$/p;/<dot_f32>:/,/^$/p'
+} > "$OUT/01c-disasm.txt" 2>&1
+echo "  -> $OUT/01c-disasm.txt"
 
 echo "== 05-neon =="
 {

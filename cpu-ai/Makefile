@@ -18,12 +18,17 @@ SIMD    := -mavx2 -mfma
 
 .PHONY: all check clean
 
-all: $(BIN)/stage5 $(BIN)/dtype $(BIN)/gemm $(BIN)/bottleneck $(BIN)/hotloop $(BIN)/neon.aarch64
+all: $(BIN)/oneline $(BIN)/stage5 $(BIN)/dtype $(BIN)/gemm $(BIN)/bottleneck $(BIN)/hotloop $(BIN)/neon.aarch64
 
 $(BIN):
 	mkdir -p $(BIN)
 
 # ---------------- 第 1 篇：五个阶段 ----------------
+
+# 起点：三个函数，一个加法、一个求和、一个点积。
+# 关掉向量化，让一行 C 对应一条指令。
+$(BIN)/oneline: src/oneline.c common/bench.h | $(BIN)
+	$(CC) $(CFLAGS) -fno-tree-vectorize -o $@ src/oneline.c
 
 $(BIN)/stage5: src/stage5.c common/bench.h | $(BIN)
 	$(CC) $(CFLAGS) -fno-tree-vectorize -o $@ src/stage5.c

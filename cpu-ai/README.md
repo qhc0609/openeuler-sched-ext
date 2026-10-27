@@ -18,10 +18,11 @@
 **三、虚拟机的抖动比物理机大。** 同一程序重复跑，fp32 吞吐能在 13~19 GMAC/s 之间浮动。
 所以下文只信"倍数关系"，不信绝对值；每个实验都重复三次取最优。
 
-## 五组程序
+## 六组程序
 
 | 程序 | 对应文章 | 量什么 |
 |---|---|---|
+| `src/oneline.c` | 第 1 篇 | 三个函数从简到繁；两千万次乘加实测几拍 |
 | `src/stage5.c` | 第 1 篇 | 一条指令五个阶段各要几拍；访存延迟阶梯 |
 | `src/dtype.c` | 第 2 篇 | 四种数据类型的乘加吞吐；累加器位宽对精度的影响 |
 | `src/gemm_*.c` | 第 3 篇 | 五个矩阵乘版本；ARM64 NEON 的数值校验 |
@@ -61,6 +62,8 @@ qemu-aarch64-static bin/neon.aarch64
 ```
 results/00-env.txt          机器、编译器、perf 版本
 results/01-stage5.txt       五个阶段
+results/01b-oneline.txt     两千万次乘加；整数与浮点加法的延迟对比
+results/01c-disasm.txt      三个函数编译出来的指令
 results/02-dtype.txt        数据类型与精度
 results/03-gemm.txt         五个矩阵乘版本
 results/04-bottleneck.txt   三种瓶颈

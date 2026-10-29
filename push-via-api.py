@@ -121,7 +121,16 @@ def main():
     # --- 2. upload a blob per changed file, verify hash ----------------
     entries = []
     for path in diff:
-        blob_sha = git("rev-parse", "%s:%s" % (target, path)).decode().strip()
+        # 这一版提交里被删掉（或改名走了）的文件：GitHub 的 tree API 用
+        # "sha": null 表示删除，不能当成空 blob 传上去，否则远端会留一个
+        # 0 字节的文件，本地又看不到它。
+        try:
+            blob_sha = git("rev-parse", "%s:%s" % (target, path)).decode().strip()
+        except subprocess.CalledProcessError:
+            print("\ndelete %-24s" % path)
+            entries.append({"path": path, "mode": "100644",
+                            "type": "blob", "sha": None})
+            continue
         mode = git("ls-tree", target, "--", path).decode().split()[0]
         content = git("cat-file", "blob", "%s:%s" % (target, path))
         print("\nblob %-24s %8d bytes  %s" % (path, len(content), blob_sha[:12]))

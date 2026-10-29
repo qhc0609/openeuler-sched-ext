@@ -102,10 +102,8 @@ static struct result run(const char *tag, float near, float clear,
 			ev = EV_RESET;
 		} else if (i == 1) {
 			ev = EV_CMD_START;
-		} else if (f.state == ST_RUN && d < near) {
-			ev = EV_OBSTACLE_NEAR;
-		} else if (f.state == ST_AVOID && d > clear) {
-			ev = EV_OBSTACLE_CLEAR;
+		} else {
+			ev = rb_event_from(d, f.state, near, clear);
 		}
 		fsm_step(&f, ev, t_ns);
 

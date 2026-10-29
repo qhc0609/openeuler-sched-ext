@@ -121,6 +121,24 @@ void fsm_init(struct rb_fsm *f, uint64_t now)
 }
 
 /*
+ * 事件层：传感器给的是距离，状态机要的是事件。
+ *
+ * 迟滞写在这一层，不写进表里。因为表只认离散事件——它不知道"距离"是什么，
+ * 也不需要知道。换一个传感器（超声换激光、换视觉），只改这个函数，
+ * 表一行都不用动。
+ *
+ * near 和 clear 是两个数，不是同一个数。这就是迟滞。
+ */
+int rb_event_from(float d, int state, float near, float clear)
+{
+	if (state == ST_RUN && d < near)
+		return EV_OBSTACLE_NEAR;
+	if (state == ST_AVOID && d > clear)
+		return EV_OBSTACLE_CLEAR;
+	return EV_NONE;
+}
+
+/*
  * 走一步。返回 1 表示真的转了，0 表示没转（事件不适用、或者还在驻留期）。
  */
 int fsm_step(struct rb_fsm *f, int ev, uint64_t now)

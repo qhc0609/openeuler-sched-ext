@@ -27,6 +27,10 @@ enum rb_state {
 	ST_N
 };
 
+/* 事件层的两个阈值。0.40 进、0.55 出，中间 0.15 米是迟滞带 */
+#define NEAR_M		0.40f
+#define CLEAR_M		0.55f
+
 enum rb_event {
 	EV_NONE = 0,
 	EV_CMD_START,
@@ -56,6 +60,7 @@ void fsm_init(struct rb_fsm *f, uint64_t now);
 int fsm_step(struct rb_fsm *f, int ev, uint64_t now);
 void fsm_set_hold(int s, uint32_t ms);	/* 覆盖表里某个状态的驻留时间 */
 void fsm_set_urgent(int on);		/* 安全事件要不要绕过驻留 */
+int rb_event_from(float d, int state, float near, float clear);
 int fsm_edges_total(void);
 int fsm_edges_seen(const struct rb_fsm *f);
 

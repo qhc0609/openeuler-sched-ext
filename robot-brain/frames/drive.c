@@ -181,7 +181,30 @@ int main(void)
 	printf("差 %.1f 度，正好是车头朝向。\n\n",
 	       (double)(START_TH * RAD2DEG));
 
-	printf("=== 二、忘了减车头朝向 ===\n\n");
+	printf("=== 二、世界系速度，底盘做不出来 ===\n\n");
+	{
+		struct vec2 want = { 0.30f, 0.00f };	/* 世界系：正东 0.30 m/s */
+		struct vec2 got = pose_to_body(&start, want);
+		float walk = 0.30f;
+		float miss = 2.0f * walk * sinf(fabsf(START_TH) * 0.5f);
+
+		printf("车头朝 %+.1f°，上层要的是\"正东 0.30 m/s\"\n",
+		       (double)(START_TH * RAD2DEG));
+		printf("  世界系速度   (%+.3f, %+.3f)\n", (double)want.x,
+		       (double)want.y);
+		printf("  车体系分解   (%+.3f, %+.3f)\n", (double)got.x,
+		       (double)got.y);
+		printf("  → 后退 %.3f，向右 %.3f\n\n", (double)-got.x,
+		       (double)-got.y);
+		printf("差速底盘两个轮子，能做的是\"沿车头走\"和\"绕车心转\"。\n");
+		printf("横向那 %.3f 它做不出来：要么丢掉，要么先转过去。\n",
+		       (double)-got.y);
+		printf("硬把 0.30 m/s 当\"前进\"：走 1 秒，方向错 %.1f°，",
+		       (double)(START_TH * RAD2DEG));
+		printf("终点偏 %.1f cm\n\n", (double)(miss * 100.0f));
+	}
+
+	printf("=== 三、忘了减车头朝向 ===\n\n");
 	ok = mission(nav_ok);
 	bad = mission(nav_noth);
 
@@ -198,7 +221,7 @@ int main(void)
 	printf("\n终点离目标 %s\n\n",
 	       ok.reached ? "12 毫米以内" : "还在外面");
 
-	printf("=== 三、角度不归一化 ===\n\n");
+	printf("=== 四、角度不归一化 ===\n\n");
 	printf("同一个 20 度的误差，两种写法：\n\n");
 	align_cost(wrap_pi(-340.0f * DEG2RAD), &t1, &s1);
 	align_cost(-340.0f * DEG2RAD, &t2, &s2);
@@ -211,7 +234,7 @@ int main(void)
 	printf("\n差 %.1f 倍。车还是对准了，只是白转了一圈半。\n\n",
 	       s2 / s1);
 
-	printf("=== 四、指令晚到 ===\n\n");
+	printf("=== 五、指令晚到 ===\n\n");
 	printf("车在以 1.0 rad/s 左转，队列里躺着一条 (v=0.30, w=0.00)。\n");
 	printf("它说的是\"沿当时车头走 0.30 米\"。车头一直在转，\n");
 	printf("晚取出来的每一毫秒，这句话的意思都在变。\n\n");
@@ -233,7 +256,7 @@ int main(void)
 	}
 	printf("\n");
 
-	printf("=== 五、超速了怎么截 ===\n\n");
+	printf("=== 六、超速了怎么截 ===\n\n");
 	{
 		struct motion_cmd each, ratio;
 		struct track te, tr;

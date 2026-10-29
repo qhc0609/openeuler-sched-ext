@@ -1,0 +1,12 @@
+== RTOS 侧启动（FreeRTOS V11.1.0+，tick 1000 Hz）==
+  共享内存已映射，控制块 magic=0x414d5043
+  等 host 把 virtio status 推到 DRIVER_OK ...
+  status=0x04，两个 vring 已就绪
+  回显端点已建立 addr=1024，名字服务已广播
+[rtos] 统计任务已启动，每秒一行
+[rtos] tick=1000 late=220 max_jitter=17750.4 us echo=2000 kicks_out=2001
+[rtos] tick=2001 late=457 max_jitter=17750.4 us echo=2000 kicks_out=2001
+[rtos] tick=3001 late=665 max_jitter=17750.4 us echo=2000 kicks_out=2001
+[rtos] tick=4001 late=885 max_jitter=17750.4 us echo=2000 kicks_out=2001
+[rtos] tick=5001 late=1156 max_jitter=27001.3 us echo=2000 kicks_out=2001
+[rtos] tick=6001 late=1398 max_jitter=27001.3 us echo=2000 kicks_out=2001

@@ -1,0 +1,56 @@
+########## Linux 侧 ##########
+== 一、打开共享内存设备，声明自己是 host ==
+  共享内存 4194304 字节，256 个描述符，每条消息 512 字节
+
+== 二、把共享内存包装成 virtio 设备 ==
+
+== 三、rpmsg_init_vdev()：上游 open-amp 原样调用 ==
+  status=0x04（DRIVER_OK），RX 队列已投递 256 个空缓冲
+
+== 四、等 RTOS 广播端点，然后发 2000 条消息 ==
+  [host] 名字服务广播：name="rpmsg-echo" addr=1024
+  [host] 端点已建立：本地 addr=1024，对端 addr=1024
+
+== 五、往返时间 ==
+  发送 2000 条，收回 2000 条
+  最小 3816 ns
+  中位 57064 ns
+  p90  128427 ns
+  p99  318733 ns
+  最大 1219241 ns
+  平均 68719 ns
+  单向估算 28532 ns（往返减半，含两次门铃和两次调度）
+  一问一答 3014 条/秒（严格的发一条等一条，不是流水线）
+
+== 六、门铃计数 ==
+  Linux->RTOS 2000 次，RTOS->Linux 2001 次
+  本端 notify 被调 2000 次
+  RTOS tick 频率 1000 Hz
+
+== 七、RTOS 侧控制环（从共享内存里读）==
+  实测 975.2 Hz（设定 1000 Hz），两秒内走了 1960 拍
+  累计 4071 拍，迟到超过半拍 973 次（23.9%）
+  最近两秒 1961 拍的抖动分布：
+    <     50 us     420   21.4%
+    <    100 us     488   24.9%
+    <    200 us     441   22.5%
+    <    500 us     261   13.3%
+    <   1000 us     295   15.0%
+    >=  1000 us      56    2.9%
+  历史最大偏差 131121.2 us，最近一拍 32.9 us
+  RTOS 回显 2000 条
+
+########## RTOS 侧 ##########
+== RTOS 侧启动（FreeRTOS V11.1.0+，tick 1000 Hz）==
+  共享内存已映射，控制块 magic=0x414d5043
+  等 host 把 virtio status 推到 DRIVER_OK ...
+  status=0x04，两个 vring 已就绪
+  回显端点已建立 addr=1024，名字服务已广播
+[rtos] 统计任务已启动，每秒一行
+[rtos] tick=1000 late=166 max_jitter=3987.7 us echo=2000 kicks_out=2001
+[rtos] tick=2000 late=542 max_jitter=131121.2 us echo=2000 kicks_out=2001
+[rtos] tick=3000 late=770 max_jitter=131121.2 us echo=2000 kicks_out=2001
+[rtos] tick=4000 late=960 max_jitter=131121.2 us echo=2000 kicks_out=2001
+[rtos] tick=5000 late=1125 max_jitter=131121.2 us echo=2000 kicks_out=2001
+[rtos] tick=6000 late=1275 max_jitter=131121.2 us echo=2000 kicks_out=2001
+[rtos] tick=7000 late=1452 max_jitter=131121.2 us echo=2000 kicks_out=2001

@@ -6,7 +6,7 @@ AR      ?= ar
 TRANSPORT_OBJS := transport/transport.o transport/transport_shm.o \
                   transport/transport_ivshmem.o
 
-BINS := bin/brain bin/cerebellum bin/spin
+BINS := bin/brain bin/cerebellum bin/spin bin/naive-loop
 
 all: $(BINS)
 
@@ -24,6 +24,10 @@ bin/cerebellum: cerebellum/cerebellum.o libtransport.a | bin
 
 bin/spin: test/spin.c | bin
 	$(CC) $(CFLAGS) -o $@ test/spin.c
+
+# 对照组：一个循环干完所有事。用来量"规划和伺服挤在一个循环里"的代价。
+bin/naive-loop: test/naive-loop.c | bin
+	$(CC) $(CFLAGS) -o $@ test/naive-loop.c $(LDLIBS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<

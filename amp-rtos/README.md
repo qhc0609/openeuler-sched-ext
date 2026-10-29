@@ -217,6 +217,16 @@ insmod kernel/amp_shm.ko  # 造"硬件"
 bash test/run-all.sh      # 跑完整套测量，结果写进 results/
 ```
 
+想让它开机就绪，用 `make install`：把 ko 装进
+`/lib/modules/$(uname -r)/extra/`、`depmod`、再往
+`/etc/modules-load.d/` 放一行，重启后 `/dev/amp0` 自己就出现了。
+`make uninstall` 撤掉。
+
+> 别图省事写个 `.service` 直接 `insmod /root/.../amp_shm.ko`。SELinux 是
+> Enforcing 的时候，`/root` 下的文件标签是 `user_home_t`，`init_t` 加载不了，
+> 服务会以 `could not insert module: Permission denied` 失败。装到
+> `/lib/modules` 下面标签才是 `modules_object_t`。
+
 单跑一次往返：
 
 ```bash

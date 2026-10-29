@@ -42,7 +42,12 @@ LDLIBS   := /usr/local/lib/libmetal.a -lsysfs -lpthread -lrt -lm
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 
-.PHONY: all clean host rtos tools module load unload patch-rtos-kernel
+KVER    ?= $(shell uname -r)
+MODDIR   = /lib/modules/$(KVER)/extra
+MODCONF  = /etc/modules-load.d/amp-shm.conf
+
+.PHONY: all clean host rtos tools module load unload install uninstall \
+	patch-rtos-kernel
 
 all: module host rtos tools
 
@@ -77,6 +82,23 @@ load: module
 
 unload:
 	-rmmod amp_shm
+
+# 装成开机自动加载。
+#
+# 不能直接写个 .service 去 insmod /root 下的 ko：/root 的 SELinux 标签是
+# user_home_t，init_t 加载不了，报 "Permission denied"。装到 /lib/modules
+# 下面标签才是 modules_object_t。这一步 2026-10-29 在这台机器上踩过。
+install: module
+	install -D -m 644 kernel/amp_shm.ko $(MODDIR)/amp_shm.ko
+	depmod -a $(KVER)
+	-restorecon -v $(MODDIR)/amp_shm.ko
+	install -D -m 644 systemd/amp-shm.conf $(MODCONF)
+	@echo "已安装。重启后 /dev/amp0 会自动出现；不重启的话：modprobe amp_shm"
+
+uninstall:
+	-rmmod amp_shm
+	-rm -f $(MODCONF) $(MODDIR)/amp_shm.ko
+	-depmod -a $(KVER)
 
 bin:
 	mkdir -p bin

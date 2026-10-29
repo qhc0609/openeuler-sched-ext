@@ -1,0 +1,6 @@
+== 每种调用 200000 次 ==
+  clock_gettime（vDSO）          21.8 ns/次
+  syscall(getpid)（进内核）    838.2 ns/次
+  clock_nanosleep(0)（进内核）   8839.8 ns/次
+  write(/dev/null)（进内核）    932.0 ns/次
+  write(/dev/robotmotor)          942.6 ns/次

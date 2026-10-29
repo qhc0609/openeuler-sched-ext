@@ -1,0 +1,8 @@
+# 内核构建只读这个文件（同名 Makefile 是我们自己的，kbuild 不会用）
+#
+# 只把 motor.c 编成模块。first-bot.c 和 syscall-cost.c 是用户态程序，
+# 放进 obj-m 会被当成内核代码编，一堆 libc 头文件找不到。
+obj-m += motor.o
+
+# motor.c 里 include "motor_abi.h"，它在同一目录
+ccflags-y += -I$(src)
